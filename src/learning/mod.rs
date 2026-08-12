@@ -6,7 +6,7 @@
 
 /// Hard bounds for non-negative synaptic weight magnitudes.
 pub mod bounds;
-/// Per-neuron threshold homeostasis.
+/// Per-neuron cellular and structural homeostasis.
 pub mod homeostasis;
 /// Pair-based spike-timing-dependent plasticity.
 pub mod pair_stdp;
@@ -16,7 +16,7 @@ pub mod rule;
 pub mod traces;
 
 pub use bounds::{WeightBounds, WeightBoundsError};
-pub use homeostasis::{HomeostasisError, LocalHomeostasis, ThresholdChange};
+pub use homeostasis::{HomeostasisError, HomeostaticChange, LocalHomeostasis};
 pub use pair_stdp::{PairStdp, PairStdpError};
 pub use rule::{NoPlasticity, PlasticityRule};
 pub use traces::{DecayingTrace, TraceError};

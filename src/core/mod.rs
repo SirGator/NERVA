@@ -19,6 +19,6 @@ pub mod synapse;
 pub use event::{Event, EventKind, SimTime, SimTimeError};
 pub use ids::{NeuronId, SynapseId};
 pub use network::{Network, NetworkError};
-pub use neuron::{Neuron, NeuronError, NeuronRole, Polarity};
+pub use neuron::{HomeostaticState, Neuron, NeuronError, NeuronRole, Polarity};
 pub use spike::Spike;
 pub use synapse::{Synapse, SynapseError};

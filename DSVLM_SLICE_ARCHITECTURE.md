@@ -287,9 +287,17 @@ Für M0 gilt:
 
 #### Lokale Homöostase
 
-Jedes Neuron führt eine langsam zerfallende Schätzung seiner eigenen Feuerrate. Ein lokales Wartungsereignis kann seine Schwelle leicht erhöhen, wenn es dauerhaft zu aktiv ist, oder senken, wenn es zu wenig feuert. Es gibt keinen global berechneten Durchschnitt.
+Jedes Neuron führt langsam zerfallende, ausschließlich lokale Schätzungen seiner eigenen Feuerrate und der empfangenen absoluten Eingangsgröße. Ein lokales Wartungsereignis unterscheidet damit zwischen „ich erhalte genügend Input, feuere aber zu wenig“ und „ich erhalte zu wenig Input“:
 
-Homöostase wird in den Experimenten separat zu- und abgeschaltet, damit ihr Effekt messbar bleibt.
+- bei ausreichendem Input und zu wenig Output steigt der intrinsische Strom;
+- bei zu wenig Input und zu wenig Output steigt ein lokaler `structural_drive` als Signal für einen späteren Growth-/Pruning-Slice;
+- bei zu hoher Aktivität sinkt der intrinsische Strom, bei hoher Aktivität trotz fehlendem Input besonders stark.
+
+Der intrinsische Strom ist eine zeitkontinuierliche Größe (Potential pro Sekunde), keine Addition pro Runtime-Update. Er verschiebt das LIF-Gleichgewicht analytisch über die tatsächlich verstrichene Simulationszeit. Dadurch hat dieselbe Konfiguration bei zwei oder zweihundert Zwischenereignissen denselben Effekt.
+
+Wenn Homöostase aktiviert wird, besitzt jedes Neuron seinen eigenen nächsten Wartungszeitpunkt und plant nach Ausführung nur seinen eigenen Folgetermin. Die initialen lokalen Fristen entstehen aus einem festen Hash der Neuron-ID und sind damit auch bei sequentiellen IDs über das Intervall verteilt; es gibt keinen globalen Tick, der alle Neuronen aktualisiert. Beim Reaktivieren wird der Zeitanker jeder Zelle auf die aktuelle Simulationszeit gesetzt, damit eine deaktivierte Phase nicht als einmaliger großer Regelschritt nachgeholt wird. Eine positive intrinsische Erregbarkeit plant darüber hinaus einen lokalen, deterministischen Threshold-Crossing-Event – Random-Spikes sind nicht erforderlich. Ändert ein Input oder eine lokale Stromanpassung diese Vorhersage, wird der alte Queue-Eintrag sofort storniert, statt als fernes Stale-Event im Scheduler zu bleiben.
+
+Homöostase wird in den Experimenten separat zu- und abgeschaltet, damit ihr Effekt messbar bleibt. `structural_drive` verändert in M0 noch keine Topologie; die tatsächliche Verbindungssuche gehört in den dafür vorgesehenen Entwicklungsslice nach M0.
 
 ### 6.6 `roots`
 
@@ -368,7 +376,7 @@ Die Runtime veröffentlicht unveränderliche Beobachtungsereignisse, beispielswe
 - `SpikeEmitted`
 - `SynapticArrival`
 - `WeightChanged`
-- `ThresholdChanged`
+- `HomeostasisChanged`
 - `MotorOutput`
 
 `metrics` berechnet daraus Messwerte. `debug` schreibt ein vollständiges Ereignisprotokoll und Zustands-Snapshots. `visualization` exportiert Positionen, Verbindungen, Gewichte und Spike-Zeiten, beispielsweise als JSON oder CSV.

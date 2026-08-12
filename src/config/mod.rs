@@ -50,18 +50,6 @@ impl DsvlmConfig {
             });
         }
 
-        let minimum_valid_threshold = self
-            .neuron
-            .resting_potential
-            .max(self.neuron.reset_potential);
-        if self.learning.homeostasis.min_threshold <= minimum_valid_threshold {
-            return Err(ConfigError::HomeostasisThresholdNotAboveCellBaseline {
-                min_threshold: self.learning.homeostasis.min_threshold,
-                resting_potential: self.neuron.resting_potential,
-                reset_potential: self.neuron.reset_potential,
-            });
-        }
-
         Ok(())
     }
 }
@@ -132,15 +120,6 @@ pub enum ConfigError {
     ThresholdNotAboveRestingPotential,
     /// The reset potential is not strictly below the firing threshold.
     ResetNotBelowThreshold,
-    /// The lowest homeostatic threshold would violate the neuron's LIF ordering.
-    HomeostasisThresholdNotAboveCellBaseline {
-        /// Configured inclusive lower homeostatic bound.
-        min_threshold: f32,
-        /// Cell resting potential.
-        resting_potential: f32,
-        /// Cell reset potential.
-        reset_potential: f32,
-    },
 }
 
 impl fmt::Display for ConfigError {
@@ -190,14 +169,6 @@ impl fmt::Display for ConfigError {
             Self::ResetNotBelowThreshold => {
                 formatter.write_str("reset potential must be lower than threshold")
             }
-            Self::HomeostasisThresholdNotAboveCellBaseline {
-                min_threshold,
-                resting_potential,
-                reset_potential,
-            } => write!(
-                formatter,
-                "homeostasis minimum threshold ({min_threshold}) must be above resting ({resting_potential}) and reset ({reset_potential}) potentials"
-            ),
         }
     }
 }
@@ -267,17 +238,6 @@ mod tests {
         assert!(matches!(
             config.validate(),
             Err(ConfigError::IncompatibleWeightBounds { .. })
-        ));
-    }
-
-    #[test]
-    fn aggregate_rejects_homeostasis_threshold_that_core_would_reject() {
-        let mut config = DsvlmConfig::default();
-        config.learning.homeostasis.min_threshold = config.neuron.resting_potential;
-
-        assert!(matches!(
-            config.validate(),
-            Err(ConfigError::HomeostasisThresholdNotAboveCellBaseline { .. })
         ));
     }
 }

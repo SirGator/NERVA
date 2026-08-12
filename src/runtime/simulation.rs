@@ -60,18 +60,24 @@ pub enum ObservationEvent {
         /// Weight after the local hook.
         new_weight: f32,
     },
-    /// Local homeostasis changed one neuron's threshold.
-    ThresholdChanged {
+    /// Local homeostasis changed one neuron's cellular or structural state.
+    HomeostasisChanged {
         /// Exact maintenance timestamp.
         time: SimTime,
         /// Neuron modified by local maintenance.
         neuron_id: NeuronId,
-        /// Threshold before maintenance.
-        old_threshold: f32,
-        /// Threshold after maintenance.
-        new_threshold: f32,
-        /// Neuron-local rate estimate used for the change.
-        estimated_rate_hz: f32,
+        /// Neuron-local firing estimate used for the change.
+        firing_avg: f32,
+        /// Neuron-local input estimate used for the change.
+        input_avg: f32,
+        /// Intrinsic current before maintenance.
+        old_intrinsic_current: f32,
+        /// Intrinsic current after maintenance.
+        new_intrinsic_current: f32,
+        /// Structural drive before maintenance.
+        old_structural_drive: f32,
+        /// Structural drive after maintenance.
+        new_structural_drive: f32,
     },
 }
 
@@ -157,6 +163,17 @@ pub enum SimulationError {
     Neuron(NeuronError),
     /// Local homeostasis rejected an update.
     Homeostasis(HomeostasisError),
+    /// `run` has no natural end while local clocks or autonomous firing are active.
+    RunRequiresDeadline,
+    /// A local maintenance deadline could not be represented in simulation time.
+    HomeostasisTimeOverflow {
+        /// Last successfully processed maintenance timestamp.
+        time: SimTime,
+        /// Interval or initial offset that overflowed the timestamp.
+        duration_us: u64,
+    },
+    /// A manually supplied local-maintenance controller had an invalid period.
+    InvalidHomeostasisInterval,
     /// An event references no such neuron.
     UnknownNeuron(NeuronId),
     /// A synaptic arrival references no such synapse.
@@ -187,6 +204,11 @@ pub enum SimulationError {
         /// Target whose input sum overflowed.
         target: NeuronId,
     },
+    /// Finite simultaneous input magnitudes overflowed while being accumulated.
+    NonFiniteInputMagnitude {
+        /// Target whose absolute-input sum overflowed.
+        target: NeuronId,
+    },
 }
 
 impl fmt::Display for SimulationError {
@@ -203,6 +225,16 @@ impl fmt::Display for SimulationError {
             Self::Propagation(error) => write!(formatter, "propagation error: {error}"),
             Self::Neuron(error) => write!(formatter, "neuron runtime error: {error}"),
             Self::Homeostasis(error) => write!(formatter, "homeostasis error: {error:?}"),
+            Self::RunRequiresDeadline => formatter.write_str(
+                "local clocks or autonomous firing are active; use run_until with an explicit horizon",
+            ),
+            Self::HomeostasisTimeOverflow { time, duration_us } => write!(
+                formatter,
+                "adding local maintenance duration {duration_us} us to time {time} overflows simulation time"
+            ),
+            Self::InvalidHomeostasisInterval => {
+                formatter.write_str("local maintenance interval must be greater than zero")
+            }
             Self::UnknownNeuron(id) => write!(formatter, "event references unknown neuron {id}"),
             Self::UnknownSynapse(id) => write!(formatter, "event references unknown synapse {id}"),
             Self::SynapticTargetMismatch {
@@ -229,6 +261,10 @@ impl fmt::Display for SimulationError {
                     "simultaneous input sum for neuron {target} became non-finite"
                 )
             }
+            Self::NonFiniteInputMagnitude { target } => write!(
+                formatter,
+                "simultaneous input magnitude for neuron {target} became non-finite"
+            ),
         }
     }
 }
@@ -300,7 +336,7 @@ impl<R: PlasticityRule> Simulation<R> {
         try_distance_attenuation(0.0, distance_decay_length)
             .map_err(SimulationError::InvalidDistanceDecayLength)?;
 
-        Ok(Self {
+        let mut simulation = Self {
             network,
             plasticity_rule,
             homeostasis: LocalHomeostasis::new(&HomeostasisConfig::default()),
@@ -309,7 +345,9 @@ impl<R: PlasticityRule> Simulation<R> {
             max_events_per_batch: runtime_config.max_events_per_batch,
             distance_decay_length,
             learning_enabled: true,
-        })
+        };
+        simulation.refresh_all_intrinsic_spikes()?;
+        Ok(simulation)
     }
 
     /// Constructs a runtime from a complete, validated experiment config.
@@ -331,13 +369,21 @@ impl<R: PlasticityRule> Simulation<R> {
             .map_err(SimulationError::InvalidNetwork)?;
         simulation.learning_enabled = config.learning.enabled;
         simulation.homeostasis = LocalHomeostasis::from_learning_config(&config.learning);
+        simulation.reset_homeostasis_time_anchors()?;
+        simulation.start_homeostasis_clocks()?;
         Ok(simulation)
     }
 
-    /// Replaces the default-disabled local homeostasis state.
-    pub fn with_homeostasis(mut self, homeostasis: LocalHomeostasis) -> Self {
+    /// Replaces the default-disabled local homeostasis state and starts every
+    /// enabled neuron's independently phased local clock.
+    pub fn with_homeostasis(
+        mut self,
+        homeostasis: LocalHomeostasis,
+    ) -> Result<Self, SimulationError> {
         self.homeostasis = homeostasis;
-        self
+        self.reset_homeostasis_time_anchors()?;
+        self.start_homeostasis_clocks()?;
+        Ok(self)
     }
 
     /// Read-only access to authoritative network state.
@@ -358,6 +404,16 @@ impl<R: PlasticityRule> Simulation<R> {
     /// Number of queued events.
     pub fn pending_event_count(&self) -> usize {
         self.scheduler.len()
+    }
+
+    /// Whether an event other than recurring local maintenance remains queued.
+    ///
+    /// A bounded `run_until` deliberately leaves the next per-neuron
+    /// maintenance deadline in the scheduler. Experiments can use this method
+    /// to distinguish that expected local clock from unresolved neural work.
+    pub fn has_pending_non_homeostasis_events(&self) -> bool {
+        self.scheduler
+            .any_payload(|event| !matches!(event, EventKind::Homeostasis { .. }))
     }
 
     /// Immutable observations accumulated so far.
@@ -385,9 +441,23 @@ impl<R: PlasticityRule> Simulation<R> {
         self.learning_enabled
     }
 
-    /// Enables or freezes local activity recording and threshold maintenance.
-    pub fn set_homeostasis_enabled(&mut self, enabled: bool) {
+    /// Enables or freezes local activity recording and cellular maintenance.
+    ///
+    /// Enabling starts any missing neuron-local clocks and resets their elapsed
+    /// maintenance anchors. A disabled interval therefore cannot be applied as
+    /// one oversized adjustment after re-enabling. Disabling stops rescheduling
+    /// after a currently queued maintenance event, so no global maintenance
+    /// lifecycle needs to be managed by the caller.
+    pub fn set_homeostasis_enabled(&mut self, enabled: bool) -> Result<(), SimulationError> {
+        let was_enabled = self.homeostasis.is_enabled();
         self.homeostasis.set_enabled(enabled);
+        if enabled && !was_enabled {
+            self.reset_homeostasis_time_anchors()?;
+        }
+        if enabled {
+            self.start_homeostasis_clocks()?;
+        }
+        Ok(())
     }
 
     /// Whether local homeostasis is active.
@@ -419,13 +489,54 @@ impl<R: PlasticityRule> Simulation<R> {
         ))
     }
 
-    /// Schedules one local threshold-maintenance event.
+    /// Schedules one one-shot local maintenance event.
+    ///
+    /// For recurring local clocks, use [`Self::start_homeostasis_clocks`].
     pub fn schedule_homeostasis(
         &mut self,
         at: SimTime,
         neuron_id: NeuronId,
     ) -> Result<u64, SimulationError> {
         self.schedule_event(Event::new(at, EventKind::Homeostasis { neuron_id }))
+    }
+
+    /// Starts one recurring, independently scheduled maintenance clock per
+    /// neuron when local homeostasis is enabled.
+    ///
+    /// The first deadlines are deterministically staggered by stable neuron
+    /// identity. This schedules local events only; it never scans and updates
+    /// all cells in a global tick.
+    pub fn start_homeostasis_clocks(&mut self) -> Result<(), SimulationError> {
+        if !self.homeostasis.is_enabled() {
+            return Ok(());
+        }
+
+        let now = self.current_time();
+        let interval = self.homeostasis.update_interval_us();
+        if interval == 0 {
+            return Err(SimulationError::InvalidHomeostasisInterval);
+        }
+        let neuron_ids: Vec<_> = self.network.neuron_ids().collect();
+        for neuron_id in neuron_ids {
+            if self
+                .network
+                .neuron(neuron_id)
+                .ok_or(SimulationError::UnknownNeuron(neuron_id))?
+                .next_homeostasis_update()
+                .is_some()
+            {
+                continue;
+            }
+            let initial_offset = homeostasis_initial_phase(neuron_id, interval) + 1;
+            let first = now.checked_add_us(initial_offset).ok_or(
+                SimulationError::HomeostasisTimeOverflow {
+                    time: now,
+                    duration_us: initial_offset,
+                },
+            )?;
+            self.schedule_next_homeostasis(neuron_id, first)?;
+        }
+        Ok(())
     }
 
     /// Processes the next complete timestamp batch.
@@ -436,11 +547,20 @@ impl<R: PlasticityRule> Simulation<R> {
         self.process_batch(batch).map(Some)
     }
 
-    /// Runs until no event remains.
+    /// Runs a finite event stream until no event remains.
+    ///
+    /// Recurring local maintenance or autonomous intrinsic firing have no
+    /// implicit end time, so those simulations must use [`Self::run_until`].
     pub fn run(&mut self) -> Result<RunReport, SimulationError> {
+        if self.has_open_ended_local_events() {
+            return Err(SimulationError::RunRequiresDeadline);
+        }
         let mut report = RunReport::default();
         while let Some(batch) = self.step()? {
             report.include(batch);
+            if self.has_open_ended_local_events() {
+                return Err(SimulationError::RunRequiresDeadline);
+            }
         }
         Ok(report)
     }
@@ -497,7 +617,9 @@ impl<R: PlasticityRule> Simulation<R> {
                 self.require_neuron(target)?;
                 validate_input(target, amplitude)
             }
-            EventKind::Homeostasis { neuron_id } => self.require_neuron(neuron_id),
+            EventKind::Homeostasis { neuron_id } | EventKind::IntrinsicSpike { neuron_id } => {
+                self.require_neuron(neuron_id)
+            }
         }
     }
 
@@ -506,6 +628,83 @@ impl<R: PlasticityRule> Simulation<R> {
             .neuron(id)
             .map(|_| ())
             .ok_or(SimulationError::UnknownNeuron(id))
+    }
+
+    fn has_open_ended_local_events(&self) -> bool {
+        self.network.neurons().any(|neuron| {
+            (self.homeostasis.is_enabled() && neuron.next_homeostasis_update().is_some())
+                || neuron.next_intrinsic_spike().is_some()
+        })
+    }
+
+    fn reset_homeostasis_time_anchors(&mut self) -> Result<(), SimulationError> {
+        let now = self.current_time();
+        for neuron in self.network.neurons_mut() {
+            neuron.reset_homeostasis_time_anchor(now)?;
+        }
+        Ok(())
+    }
+
+    fn schedule_next_homeostasis(
+        &mut self,
+        neuron_id: NeuronId,
+        time: SimTime,
+    ) -> Result<(), SimulationError> {
+        self.schedule_event(Event::new(time, EventKind::Homeostasis { neuron_id }))?;
+        self.network
+            .neuron_mut(neuron_id)
+            .ok_or(SimulationError::UnknownNeuron(neuron_id))?
+            .set_next_homeostasis_update(Some(time));
+        Ok(())
+    }
+
+    fn refresh_all_intrinsic_spikes(&mut self) -> Result<(), SimulationError> {
+        let neuron_ids: Vec<_> = self.network.neuron_ids().collect();
+        let now = self.current_time();
+        for neuron_id in neuron_ids {
+            self.refresh_intrinsic_spike(neuron_id, now)?;
+        }
+        Ok(())
+    }
+
+    fn refresh_intrinsic_spike(
+        &mut self,
+        neuron_id: NeuronId,
+        now: SimTime,
+    ) -> Result<(), SimulationError> {
+        let (current, current_sequence, predicted) = {
+            let neuron = self
+                .network
+                .neuron(neuron_id)
+                .ok_or(SimulationError::UnknownNeuron(neuron_id))?;
+            (
+                neuron.next_intrinsic_spike(),
+                neuron.next_intrinsic_spike_sequence(),
+                neuron.predicted_intrinsic_spike_at(now),
+            )
+        };
+        if current == predicted {
+            return Ok(());
+        }
+        if let Some(sequence) = current_sequence {
+            // A prediction is replaced rather than left as a stale future
+            // event. This keeps queue space bounded by the live prediction
+            // count even when frequent inputs continually move crossings.
+            self.scheduler.cancel(sequence);
+        }
+        let next_sequence = if let Some(predicted) = predicted {
+            Some(self.schedule_event(Event::new(
+                predicted,
+                EventKind::IntrinsicSpike { neuron_id },
+            ))?)
+        } else {
+            None
+        };
+        self.network
+            .neuron_mut(neuron_id)
+            .ok_or(SimulationError::UnknownNeuron(neuron_id))?
+            .set_next_intrinsic_spike(predicted, next_sequence);
+        Ok(())
     }
 
     fn process_batch(
@@ -523,6 +722,7 @@ impl<R: PlasticityRule> Simulation<R> {
 
         let mut affected_neurons = BTreeSet::new();
         let mut maintenance_neurons = BTreeSet::new();
+        let mut due_intrinsic_neurons = BTreeSet::new();
         for scheduled in &events {
             match scheduled.payload {
                 EventKind::ExternalInput { target, .. }
@@ -533,11 +733,26 @@ impl<R: PlasticityRule> Simulation<R> {
                     affected_neurons.insert(neuron_id);
                     maintenance_neurons.insert(neuron_id);
                 }
+                EventKind::IntrinsicSpike { neuron_id } => {
+                    // Cancellation keeps this normally exact. Retaining this
+                    // identity check also protects deterministic behavior if a
+                    // caller supplied an older serialized runtime state.
+                    if self
+                        .network
+                        .neuron(neuron_id)
+                        .ok_or(SimulationError::UnknownNeuron(neuron_id))?
+                        .next_intrinsic_spike()
+                        == Some(time)
+                    {
+                        affected_neurons.insert(neuron_id);
+                        due_intrinsic_neurons.insert(neuron_id);
+                    }
+                }
             }
         }
 
         // Every affected neuron first reaches the shared timestamp analytically.
-        for neuron_id in affected_neurons {
+        for neuron_id in affected_neurons.iter().copied() {
             self.network
                 .neuron_mut(neuron_id)
                 .ok_or(SimulationError::UnknownNeuron(neuron_id))?
@@ -606,7 +821,7 @@ impl<R: PlasticityRule> Simulation<R> {
 
                     collect_input(&mut simultaneous_inputs, target, amplitude);
                 }
-                EventKind::Homeostasis { .. } => {}
+                EventKind::Homeostasis { .. } | EventKind::IntrinsicSpike { .. } => {}
             }
         }
 
@@ -614,13 +829,36 @@ impl<R: PlasticityRule> Simulation<R> {
         // integration independent of the insertion order of simultaneous
         // arrivals, including floating-point rounding behavior.
         let mut spikes = Vec::new();
-        for (target, inputs) in simultaneous_inputs {
-            let summed_input = canonical_input_sum(target, inputs)?;
+        let mut firing_candidates = due_intrinsic_neurons;
+        firing_candidates.extend(simultaneous_inputs.keys().copied());
+        for neuron_id in &firing_candidates {
+            if self
+                .network
+                .neuron(*neuron_id)
+                .ok_or(SimulationError::UnknownNeuron(*neuron_id))?
+                .next_intrinsic_spike()
+                == Some(time)
+            {
+                self.network
+                    .neuron_mut(*neuron_id)
+                    .ok_or(SimulationError::UnknownNeuron(*neuron_id))?
+                    .set_next_intrinsic_spike(None, None);
+            }
+        }
+        for target in firing_candidates {
+            let input = simultaneous_inputs
+                .remove(&target)
+                .map(|inputs| canonical_input_summary(target, inputs))
+                .transpose()?
+                .unwrap_or(InputSummary {
+                    summed_input: 0.0,
+                    input_magnitude: 0.0,
+                });
             if let Some(spike) = self
                 .network
                 .neuron_mut(target)
                 .ok_or(SimulationError::UnknownNeuron(target))?
-                .integrate_input(time, summed_input)?
+                .integrate_input_with_magnitude(time, input.summed_input, input.input_magnitude)?
             {
                 spikes.push(spike);
             }
@@ -644,6 +882,18 @@ impl<R: PlasticityRule> Simulation<R> {
         // Duplicate maintenance events for one cell and timestamp collapse into
         // one local update, just as duplicate arrivals collapse into one firing check.
         for neuron_id in maintenance_neurons {
+            let is_recurring_clock = self
+                .network
+                .neuron(neuron_id)
+                .ok_or(SimulationError::UnknownNeuron(neuron_id))?
+                .next_homeostasis_update()
+                == Some(time);
+            if is_recurring_clock {
+                self.network
+                    .neuron_mut(neuron_id)
+                    .ok_or(SimulationError::UnknownNeuron(neuron_id))?
+                    .set_next_homeostasis_update(None);
+            }
             let change = {
                 let neuron = self
                     .network
@@ -652,13 +902,25 @@ impl<R: PlasticityRule> Simulation<R> {
                 self.homeostasis.maintain(neuron, time)?
             };
             if let Some(change) = change {
-                self.event_log.push(ObservationEvent::ThresholdChanged {
+                self.event_log.push(ObservationEvent::HomeostasisChanged {
                     time,
                     neuron_id: change.neuron_id,
-                    old_threshold: change.old_threshold,
-                    new_threshold: change.new_threshold,
-                    estimated_rate_hz: change.estimated_rate_hz,
+                    firing_avg: change.firing_avg,
+                    input_avg: change.input_avg,
+                    old_intrinsic_current: change.old_intrinsic_current,
+                    new_intrinsic_current: change.new_intrinsic_current,
+                    old_structural_drive: change.old_structural_drive,
+                    new_structural_drive: change.new_structural_drive,
                 });
+            }
+            if is_recurring_clock && self.homeostasis.is_enabled() {
+                let next = time
+                    .checked_add_us(self.homeostasis.update_interval_us())
+                    .ok_or(SimulationError::HomeostasisTimeOverflow {
+                        time,
+                        duration_us: self.homeostasis.update_interval_us(),
+                    })?;
+                self.schedule_next_homeostasis(neuron_id, next)?;
             }
         }
 
@@ -670,6 +932,13 @@ impl<R: PlasticityRule> Simulation<R> {
             {
                 self.schedule_event(transmission.event)?;
             }
+        }
+
+        // Input, spike reset, and maintenance can all change the next
+        // autonomous crossing. Each affected neuron refreshes only its own
+        // prediction and eagerly cancels a superseded queue entry.
+        for neuron_id in affected_neurons {
+            self.refresh_intrinsic_spike(neuron_id, time)?;
         }
 
         Ok(BatchReport {
@@ -758,6 +1027,20 @@ impl<R: PlasticityRule> Simulation<R> {
     }
 }
 
+/// Deterministically mixes a stable neuron ID into a local-clock phase.
+///
+/// Sequential IDs would otherwise make low-numbered phases line up in the
+/// same order on every interval. SplitMix64 is fixed arithmetic (not the
+/// process-randomized standard hasher), so replay is stable across runs and
+/// platforms while phases remain well spread over `0..interval`.
+fn homeostasis_initial_phase(neuron_id: NeuronId, interval: u64) -> u64 {
+    debug_assert!(interval > 0);
+    let mut value = neuron_id.get().wrapping_add(0x9E37_79B9_7F4A_7C15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    (value ^ (value >> 31)) % interval
+}
+
 fn validate_input(target: NeuronId, amplitude: f32) -> Result<(), SimulationError> {
     if amplitude.is_finite() {
         Ok(())
@@ -770,19 +1053,38 @@ fn collect_input(inputs: &mut BTreeMap<NeuronId, Vec<f32>>, target: NeuronId, am
     inputs.entry(target).or_default().push(amplitude);
 }
 
-fn canonical_input_sum(target: NeuronId, mut amplitudes: Vec<f32>) -> Result<f32, SimulationError> {
+#[derive(Clone, Copy, Debug)]
+struct InputSummary {
+    summed_input: f32,
+    input_magnitude: f32,
+}
+
+fn canonical_input_summary(
+    target: NeuronId,
+    mut amplitudes: Vec<f32>,
+) -> Result<InputSummary, SimulationError> {
     amplitudes.sort_by(|left, right| {
         right
             .abs()
             .total_cmp(&left.abs())
             .then_with(|| left.total_cmp(right))
     });
+    let input_magnitude = amplitudes
+        .iter()
+        .fold(0.0_f64, |sum, amplitude| sum + f64::from(amplitude.abs()));
+    if !input_magnitude.is_finite() {
+        return Err(SimulationError::NonFiniteInputMagnitude { target });
+    }
+    let input_magnitude = input_magnitude.min(f64::from(f32::MAX)) as f32;
     let sum = amplitudes
         .into_iter()
         .fold(0.0_f64, |sum, amplitude| sum + f64::from(amplitude));
     let sum = sum as f32;
     if sum.is_finite() {
-        Ok(sum)
+        Ok(InputSummary {
+            summed_input: sum,
+            input_magnitude,
+        })
     } else {
         Err(SimulationError::NonFiniteSummedInput { target })
     }
@@ -791,7 +1093,7 @@ fn canonical_input_sum(target: NeuronId, mut amplitudes: Vec<f32>) -> Result<f32
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{HomeostasisConfig, NeuronConfig},
+        config::{DsvlmConfig, HomeostasisConfig, NeuronConfig},
         core::{Neuron, Polarity, Synapse},
         learning::{NoPlasticity, PlasticityRule},
         math::Position3D,
@@ -1097,42 +1399,488 @@ mod tests {
     }
 
     #[test]
-    fn maintenance_uses_neuron_local_activity_after_same_time_spike() {
+    fn maintenance_uses_neuron_local_input_and_activity_after_same_time_spike() {
         let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
             enabled: true,
+            update_interval_us: 1_000,
             target_rate_hz: 0.0,
-            adjustment_rate: 0.001,
-            min_threshold: 0.1,
-            max_threshold: 2.0,
+            target_input_rate: 0.0,
+            intrinsic_adjustment_rate: 1.0,
+            structural_adjustment_rate: 0.0,
+            min_intrinsic_current: -2.0,
+            max_intrinsic_current: 2.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 2.0,
         });
-        let mut simulation =
-            simulation(one_neuron_network(), NoPlasticity).with_homeostasis(homeostasis);
-        simulation
-            .schedule_external_input(SimTime::ZERO, NeuronId(1), 1.0)
+        let mut simulation = simulation(one_neuron_network(), NoPlasticity)
+            .with_homeostasis(homeostasis)
             .unwrap();
         simulation
-            .schedule_homeostasis(SimTime::ZERO, NeuronId(1))
+            .schedule_external_input(SimTime(1_000), NeuronId(1), 1.0)
+            .unwrap();
+        simulation
+            .schedule_homeostasis(SimTime(1_000), NeuronId(1))
             .unwrap();
 
-        simulation.run().unwrap();
+        simulation.run_until(SimTime(1_000)).unwrap();
 
         assert!(
-            (simulation
+            simulation
                 .network()
                 .neuron(NeuronId(1))
                 .unwrap()
-                .threshold()
-                - 1.1)
-                .abs()
-                < 1.0e-6
+                .intrinsic_current()
+                < 0.0
         );
         assert!(simulation.event_log().iter().any(|event| matches!(
             event,
-            ObservationEvent::ThresholdChanged {
+            ObservationEvent::HomeostasisChanged {
                 neuron_id: NeuronId(1),
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn local_homeostasis_clock_maintains_a_silent_neuron_without_global_tick() {
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: true,
+            update_interval_us: 10,
+            target_rate_hz: 1.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 1.0,
+            structural_adjustment_rate: 1.0,
+            min_intrinsic_current: -10.0,
+            max_intrinsic_current: 10.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let mut simulation = simulation(one_neuron_network(), NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        let first = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .next_homeostasis_update()
+            .expect("enabled controller starts a local clock");
+        assert!((1..=10).contains(&first.as_micros()));
+        assert_eq!(simulation.run(), Err(SimulationError::RunRequiresDeadline));
+
+        let report = simulation
+            .run_until(first.checked_add_us(10).unwrap())
+            .unwrap();
+        let neuron = simulation.network().neuron(NeuronId(1)).unwrap();
+        assert_eq!(report.spikes_emitted, 0);
+        assert!(neuron.structural_drive() > 0.0);
+        assert_eq!(neuron.next_homeostasis_update(), first.checked_add_us(20));
+        assert_eq!(
+            simulation
+                .event_log()
+                .iter()
+                .filter(|event| matches!(event, ObservationEvent::HomeostasisChanged { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn aggregate_configuration_starts_local_clocks_automatically() {
+        let mut config = DsvlmConfig::default();
+        config.network.excitatory_neurons = 1;
+        config.network.inhibitory_neurons = 0;
+        config.neuron = neuron_params();
+        config.learning.homeostasis.enabled = true;
+        config.learning.homeostasis.update_interval_us = 10;
+
+        let simulation = Simulation::from_config(one_neuron_network(), NoPlasticity, &config)
+            .expect("validated configuration starts runtime");
+
+        assert!(
+            simulation
+                .network()
+                .neuron(NeuronId(1))
+                .unwrap()
+                .next_homeostasis_update()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn intrinsic_current_emits_a_predicted_deterministic_spike_without_input() {
+        let mut network = one_neuron_network();
+        network
+            .neuron_mut(NeuronId(1))
+            .unwrap()
+            .set_intrinsic_current(2_000.0)
+            .unwrap();
+        let mut simulation = simulation(network, NoPlasticity);
+
+        assert_eq!(
+            simulation.run_until(SimTime(693)).unwrap().spikes_emitted,
+            0
+        );
+        assert_eq!(
+            simulation.run_until(SimTime(694)).unwrap().spikes_emitted,
+            1
+        );
+        assert!(simulation.event_log().iter().any(|event| matches!(
+            event,
+            ObservationEvent::SpikeEmitted(spike) if spike.neuron_id == NeuronId(1) && spike.time == SimTime(694)
+        )));
+    }
+
+    #[test]
+    fn superseded_intrinsic_prediction_is_cancelled_eagerly() {
+        let mut network = one_neuron_network();
+        network
+            .neuron_mut(NeuronId(1))
+            .unwrap()
+            .set_intrinsic_current(2_000.0)
+            .unwrap();
+        let mut simulation = simulation(network, NoPlasticity);
+        assert_eq!(simulation.pending_event_count(), 1);
+
+        simulation
+            .schedule_external_input(SimTime(100), NeuronId(1), -0.5)
+            .unwrap();
+        simulation.run_until(SimTime(100)).unwrap();
+
+        // The original crossing at 694 us was removed, rather than retained
+        // as an inert stale event alongside the replacement prediction.
+        assert_eq!(simulation.pending_event_count(), 1);
+        assert!(
+            simulation
+                .network()
+                .neuron(NeuronId(1))
+                .unwrap()
+                .next_intrinsic_spike()
+                .is_some_and(|time| time > SimTime(694))
+        );
+    }
+
+    #[test]
+    fn enabling_homeostasis_starts_and_disabling_stops_local_clocks() {
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: false,
+            update_interval_us: 100,
+            target_rate_hz: 1.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 1.0,
+            structural_adjustment_rate: 1.0,
+            min_intrinsic_current: -10.0,
+            max_intrinsic_current: 10.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let mut simulation = simulation(one_neuron_network(), NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        assert_eq!(
+            simulation
+                .network()
+                .neuron(NeuronId(1))
+                .unwrap()
+                .next_homeostasis_update(),
+            None
+        );
+
+        simulation.set_homeostasis_enabled(true).unwrap();
+        let first = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .next_homeostasis_update()
+            .expect("enabling starts the local clock");
+        simulation.set_homeostasis_enabled(false).unwrap();
+        simulation.run_until(first).unwrap();
+
+        assert_eq!(
+            simulation
+                .network()
+                .neuron(NeuronId(1))
+                .unwrap()
+                .next_homeostasis_update(),
+            None
+        );
+        assert_eq!(simulation.pending_event_count(), 0);
+
+        simulation.set_homeostasis_enabled(true).unwrap();
+        assert!(
+            simulation
+                .network()
+                .neuron(NeuronId(1))
+                .unwrap()
+                .next_homeostasis_update()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn reenabled_homeostasis_does_not_integrate_the_disabled_interval() {
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: true,
+            update_interval_us: 10,
+            target_rate_hz: 1.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 1.0,
+            structural_adjustment_rate: 1.0,
+            min_intrinsic_current: -10.0,
+            max_intrinsic_current: 10.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let mut simulation = simulation(one_neuron_network(), NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        let first = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .next_homeostasis_update()
+            .unwrap();
+        simulation.run_until(first).unwrap();
+        let drive_before_pause = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .structural_drive();
+
+        simulation.set_homeostasis_enabled(false).unwrap();
+        simulation
+            .schedule_external_input(SimTime(100_000), NeuronId(1), 0.0)
+            .unwrap();
+        simulation.run_until(SimTime(100_000)).unwrap();
+
+        simulation.set_homeostasis_enabled(true).unwrap();
+        let first_after_reenable = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .next_homeostasis_update()
+            .unwrap();
+        simulation.run_until(first_after_reenable).unwrap();
+        let drive_after_reenable = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .structural_drive();
+
+        // Only the freshly enabled local phase (at most 10 us), not the
+        // nearly 100 ms disabled interval, contributes to this update.
+        assert!(drive_after_reenable - drive_before_pause < 0.000_02);
+    }
+
+    #[test]
+    fn many_neuron_clocks_have_deterministic_spread_without_a_global_phase() {
+        let mut network = Network::new();
+        for id in 1..=1_000 {
+            network
+                .add_neuron(neuron(id, Polarity::Excitatory))
+                .unwrap();
+        }
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: true,
+            update_interval_us: 10_000,
+            target_rate_hz: 1.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 1.0,
+            structural_adjustment_rate: 1.0,
+            min_intrinsic_current: -10.0,
+            max_intrinsic_current: 10.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let simulation = simulation(network, NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        let phases: BTreeSet<_> = simulation
+            .network()
+            .neurons()
+            .map(|neuron| neuron.next_homeostasis_update().unwrap())
+            .collect();
+
+        assert_eq!(simulation.pending_event_count(), 1_000);
+        assert!(phases.len() > 900, "hash phases unexpectedly collided");
+        assert!(phases.first().unwrap().as_micros() < 100);
+        assert!(phases.last().unwrap().as_micros() > 9_900);
+    }
+
+    #[test]
+    fn multi_minute_local_homeostasis_stays_bounded_across_input_regimes() {
+        let params = NeuronConfig {
+            resting_potential: 0.0,
+            reset_potential: 0.0,
+            threshold: 1.0,
+            membrane_tau_us: 1_000.0,
+            refractory_period_us: 1,
+            // A one-second trace makes the 10 Hz long-run target observable
+            // despite the two deliberately different input temporal patterns.
+            activity_trace_tau_us: 1_000_000.0,
+        };
+        let mut network = Network::new();
+        for id in 1..=3 {
+            network
+                .add_neuron(
+                    Neuron::new(
+                        NeuronId(id),
+                        Position3D::ORIGIN,
+                        Polarity::Excitatory,
+                        None,
+                        params,
+                        SimTime::ZERO,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: true,
+            update_interval_us: 100_000,
+            target_rate_hz: 10.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 0.01,
+            structural_adjustment_rate: 0.001,
+            min_intrinsic_current: -1_000.0,
+            max_intrinsic_current: 1_000.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let mut simulation = simulation(network, NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        const HORIZON_US: u64 = 180_000_000;
+
+        // Neuron 1 gets regular 10 Hz drive. Neuron 3 receives the same mean
+        // rate in short bursts; neuron 2 remains isolated and must request
+        // structure without manufacturing output through intrinsic current.
+        for time in (0..=HORIZON_US).step_by(100_000) {
+            simulation
+                .schedule_external_input(SimTime(time), NeuronId(1), 1.1)
+                .unwrap();
+        }
+        for burst_start in (0..=HORIZON_US).step_by(500_000) {
+            for offset in [0, 20_000, 40_000, 60_000, 80_000] {
+                let time = burst_start + offset;
+                if time <= HORIZON_US {
+                    simulation
+                        .schedule_external_input(SimTime(time), NeuronId(3), 1.1)
+                        .unwrap();
+                }
+            }
+        }
+
+        simulation.run_until(SimTime(HORIZON_US)).unwrap();
+        let regular = simulation.network().neuron(NeuronId(1)).unwrap();
+        let isolated = simulation.network().neuron(NeuronId(2)).unwrap();
+        let bursty = simulation.network().neuron(NeuronId(3)).unwrap();
+
+        assert!(regular.intrinsic_current().abs() < 100.0);
+        assert!(bursty.intrinsic_current().abs() < 100.0);
+        assert_eq!(isolated.intrinsic_current(), 0.0);
+        assert!(
+            (0.1..0.2).contains(&isolated.structural_drive()),
+            "isolated structural drive should remain below its clamp: {}",
+            isolated.structural_drive()
+        );
+        assert!(simulation.event_log().iter().any(|event| matches!(
+            event,
+            ObservationEvent::SpikeEmitted(spike) if spike.neuron_id == NeuronId(1)
+        )));
+        assert!(simulation.event_log().iter().any(|event| matches!(
+            event,
+            ObservationEvent::SpikeEmitted(spike) if spike.neuron_id == NeuronId(3)
+        )));
+    }
+
+    #[test]
+    fn sustained_input_raises_current_then_autonomous_spikes_apply_negative_feedback() {
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: true,
+            update_interval_us: 1_000,
+            target_rate_hz: 90.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 5_000.0,
+            structural_adjustment_rate: 0.0,
+            min_intrinsic_current: 0.0,
+            max_intrinsic_current: 2_000.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let mut simulation = simulation(one_neuron_network(), NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        for time in (0..=100_000).step_by(1_300) {
+            simulation
+                .schedule_external_input(SimTime(time), NeuronId(1), 0.1)
+                .unwrap();
+        }
+
+        simulation.run_until(SimTime(100_000)).unwrap();
+        let events = simulation.event_log();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ObservationEvent::HomeostasisChanged {
+                old_intrinsic_current,
+                new_intrinsic_current,
+                ..
+            } if new_intrinsic_current > old_intrinsic_current
+        )));
+        let spike_times: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                ObservationEvent::SpikeEmitted(spike) => Some(spike.time),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            spike_times.iter().any(|time| time.as_micros() % 1_300 != 0),
+            "{spike_times:?}"
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            ObservationEvent::HomeostasisChanged {
+                firing_avg,
+                old_intrinsic_current,
+                new_intrinsic_current,
+                ..
+            } if (firing_avg - 90.0).abs() <= 5.0
+                && new_intrinsic_current < old_intrinsic_current
+        )));
+        let current = simulation
+            .network()
+            .neuron(NeuronId(1))
+            .unwrap()
+            .intrinsic_current();
+        assert!(
+            (0.0..2_000.0).contains(&current),
+            "feedback must settle below its safety clamp, got {current}"
+        );
+    }
+
+    #[test]
+    fn isolated_cell_accumulates_structural_drive_without_artificial_spikes_over_time() {
+        let homeostasis = LocalHomeostasis::new(&HomeostasisConfig {
+            enabled: true,
+            update_interval_us: 1_000,
+            target_rate_hz: 20.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 5_000.0,
+            structural_adjustment_rate: 1.0,
+            min_intrinsic_current: 0.0,
+            max_intrinsic_current: 2_000.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
+        });
+        let mut simulation = simulation(one_neuron_network(), NoPlasticity)
+            .with_homeostasis(homeostasis)
+            .unwrap();
+        let report = simulation.run_until(SimTime(100_000)).unwrap();
+        let neuron = simulation.network().neuron(NeuronId(1)).unwrap();
+
+        assert_eq!(report.spikes_emitted, 0);
+        assert_eq!(neuron.intrinsic_current(), 0.0);
+        assert!(neuron.structural_drive() > 0.09);
     }
 
     #[test]

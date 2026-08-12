@@ -1,6 +1,6 @@
 //! Deterministic timestamp scheduler without a global simulation tick.
 
-use std::{cmp::Ordering, collections::BinaryHeap, error::Error, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::core::SimTime;
 
@@ -69,7 +69,13 @@ impl Error for SchedulerError {}
 /// A deterministic priority queue ordered by `(timestamp, insertion_sequence)`.
 #[derive(Debug)]
 pub struct EventScheduler<E> {
-    heap: BinaryHeap<HeapEntry<E>>,
+    /// Events are keyed by their two deterministic ordering keys. A map, in
+    /// contrast to a binary heap with tombstones, lets a superseded predicted
+    /// event be removed immediately and releases its payload memory.
+    events: BTreeMap<(SimTime, u64), E>,
+    /// Locates an insertion sequence for `cancel` without changing the
+    /// externally stable sequence returned by `schedule`.
+    sequence_times: BTreeMap<u64, SimTime>,
     next_sequence: u64,
     current_time: SimTime,
     last_processed_time: Option<SimTime>,
@@ -85,7 +91,8 @@ impl<E> EventScheduler<E> {
     /// Creates an empty scheduler at simulation time zero.
     pub fn new() -> Self {
         Self {
-            heap: BinaryHeap::new(),
+            events: BTreeMap::new(),
+            sequence_times: BTreeMap::new(),
             next_sequence: 0,
             current_time: SimTime::ZERO,
             last_processed_time: None,
@@ -99,17 +106,25 @@ impl<E> EventScheduler<E> {
 
     /// Timestamp of the next due batch without removing it.
     pub fn next_time(&self) -> Option<SimTime> {
-        self.heap.peek().map(|entry| entry.execute_at)
+        self.events.first_key_value().map(|((time, _), _)| *time)
     }
 
     /// Number of queued events across all timestamps.
     pub fn len(&self) -> usize {
-        self.heap.len()
+        self.events.len()
     }
 
     /// Whether no event is waiting.
     pub fn is_empty(&self) -> bool {
-        self.heap.is_empty()
+        self.events.is_empty()
+    }
+
+    /// Returns whether any queued payload satisfies `predicate`.
+    ///
+    /// This read-only inspection is useful for bounded experiment horizons
+    /// whose recurring local maintenance events are expected to remain queued.
+    pub(crate) fn any_payload(&self, mut predicate: impl FnMut(&E) -> bool) -> bool {
+        self.events.values().any(&mut predicate)
     }
 
     /// Inserts an event and returns its globally stable insertion sequence.
@@ -129,12 +144,23 @@ impl<E> EventScheduler<E> {
             .next_sequence
             .checked_add(1)
             .ok_or(SchedulerError::InsertionSequenceExhausted)?;
-        self.heap.push(HeapEntry {
-            execute_at,
-            insertion_sequence: sequence,
-            payload,
-        });
+        self.events.insert((execute_at, sequence), payload);
+        self.sequence_times.insert(sequence, execute_at);
         Ok(sequence)
+    }
+
+    /// Removes one still-queued event by the insertion sequence returned from
+    /// [`Self::schedule`]. Returns `false` when that event was already
+    /// processed or had previously been cancelled.
+    ///
+    /// Cancellation is eager: the event and its payload leave the queue now,
+    /// rather than becoming a stale heap entry that must wait for its old
+    /// timestamp before being discarded.
+    pub fn cancel(&mut self, insertion_sequence: u64) -> bool {
+        let Some(time) = self.sequence_times.remove(&insertion_sequence) else {
+            return false;
+        };
+        self.events.remove(&(time, insertion_sequence)).is_some()
     }
 
     /// Removes every event at the earliest timestamp as one atomic batch.
@@ -149,11 +175,9 @@ impl<E> EventScheduler<E> {
             return Ok(None);
         };
 
-        let event_count = self
-            .heap
-            .iter()
-            .filter(|entry| entry.execute_at == time)
-            .count();
+        let first_key = (time, 0);
+        let last_key = (time, u64::MAX);
+        let event_count = self.events.range(first_key..=last_key).count();
         if event_count > max_events {
             return Err(SchedulerError::BatchLimitExceeded {
                 time,
@@ -162,51 +186,28 @@ impl<E> EventScheduler<E> {
             });
         }
 
+        let keys: Vec<_> = self
+            .events
+            .range(first_key..=last_key)
+            .map(|(key, _)| *key)
+            .collect();
         let mut events = Vec::with_capacity(event_count);
-        while self.next_time() == Some(time) {
-            let entry = self.heap.pop().expect("peeked event must remain present");
+        for (execute_at, insertion_sequence) in keys {
+            let payload = self
+                .events
+                .remove(&(execute_at, insertion_sequence))
+                .expect("ranged queued event must remain present");
+            self.sequence_times.remove(&insertion_sequence);
             events.push(ScheduledEvent {
-                execute_at: entry.execute_at,
-                insertion_sequence: entry.insertion_sequence,
-                payload: entry.payload,
+                execute_at,
+                insertion_sequence,
+                payload,
             });
         }
         self.current_time = time;
         self.last_processed_time = Some(time);
 
         Ok(Some(EventBatch::from_sorted(time, events)))
-    }
-}
-
-/// `BinaryHeap` is a max-heap, so ordering is deliberately reversed for the two
-/// scheduling keys. Payloads never participate in ordering.
-#[derive(Debug)]
-struct HeapEntry<E> {
-    execute_at: SimTime,
-    insertion_sequence: u64,
-    payload: E,
-}
-
-impl<E> PartialEq for HeapEntry<E> {
-    fn eq(&self, other: &Self) -> bool {
-        (self.execute_at, self.insertion_sequence) == (other.execute_at, other.insertion_sequence)
-    }
-}
-
-impl<E> Eq for HeapEntry<E> {}
-
-impl<E> PartialOrd for HeapEntry<E> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<E> Ord for HeapEntry<E> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .execute_at
-            .cmp(&self.execute_at)
-            .then_with(|| other.insertion_sequence.cmp(&self.insertion_sequence))
     }
 }
 
@@ -282,5 +283,20 @@ mod tests {
                 time: SimTime::ZERO,
             })
         );
+    }
+
+    #[test]
+    fn cancellation_eagerly_removes_a_superseded_event() {
+        let mut scheduler = EventScheduler::new();
+        let cancelled = scheduler.schedule(SimTime(10), 'a').unwrap();
+        scheduler.schedule(SimTime(20), 'b').unwrap();
+
+        assert!(scheduler.cancel(cancelled));
+        assert!(!scheduler.cancel(cancelled));
+        assert_eq!(scheduler.len(), 1);
+        assert_eq!(scheduler.next_time(), Some(SimTime(20)));
+
+        let batch = scheduler.pop_next_batch(10).unwrap().unwrap();
+        assert_eq!(batch.events()[0].payload, 'b');
     }
 }

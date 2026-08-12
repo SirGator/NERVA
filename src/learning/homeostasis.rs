@@ -1,4 +1,4 @@
-//! Per-neuron firing-rate homeostasis with no population-wide signal.
+//! Per-neuron cellular and structural homeostasis with no population signal.
 
 use crate::{
     config::HomeostasisConfig,
@@ -18,31 +18,43 @@ impl From<NeuronError> for HomeostasisError {
     }
 }
 
-/// Description of one locally applied threshold adjustment.
+/// Description of one locally applied cellular or structural adjustment.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ThresholdChange {
-    /// Neuron whose threshold was changed.
+pub struct HomeostaticChange {
+    /// Neuron whose local state changed.
     pub neuron_id: NeuronId,
-    /// Threshold before local maintenance.
-    pub old_threshold: f32,
-    /// Threshold after local maintenance and clamping.
-    pub new_threshold: f32,
     /// Local exponentially weighted firing-rate estimate used by the update.
-    pub estimated_rate_hz: f32,
+    pub firing_avg: f32,
+    /// Local exponentially weighted absolute-input estimate used by the update.
+    pub input_avg: f32,
+    /// Intrinsic current before the update.
+    pub old_intrinsic_current: f32,
+    /// Intrinsic current after clamping.
+    pub new_intrinsic_current: f32,
+    /// Structural drive before the update.
+    pub old_structural_drive: f32,
+    /// Structural drive after clamping.
+    pub new_structural_drive: f32,
 }
 
-/// Local, independently switchable firing-rate homeostasis.
+/// Local, independently switchable slow regulation.
 ///
-/// The activity estimate lives in the neuron itself and no global mean or error
-/// exists. Core spike emission increments that trace; maintenance only reads it
-/// after analytical time advancement.
+/// A neuron with adequate input but too little output becomes intrinsically
+/// more excitable. A neuron with too little input raises structural drive
+/// instead, allowing a later growth/pruning slice to search locally without
+/// mistaking missing connectivity for missing excitability.
 #[derive(Debug)]
 pub struct LocalHomeostasis {
     enabled: bool,
+    update_interval_us: u64,
     target_rate_hz: f32,
-    adjustment_rate: f32,
-    min_threshold: f32,
-    max_threshold: f32,
+    target_input_rate: f32,
+    intrinsic_adjustment_rate: f32,
+    structural_adjustment_rate: f32,
+    min_intrinsic_current: f32,
+    max_intrinsic_current: f32,
+    min_structural_drive: f32,
+    max_structural_drive: f32,
 }
 
 impl LocalHomeostasis {
@@ -51,10 +63,15 @@ impl LocalHomeostasis {
         debug_assert!(config.validate().is_ok());
         Self {
             enabled: config.enabled,
+            update_interval_us: config.update_interval_us,
             target_rate_hz: config.target_rate_hz,
-            adjustment_rate: config.adjustment_rate,
-            min_threshold: config.min_threshold,
-            max_threshold: config.max_threshold,
+            target_input_rate: config.target_input_rate,
+            intrinsic_adjustment_rate: config.intrinsic_adjustment_rate,
+            structural_adjustment_rate: config.structural_adjustment_rate,
+            min_intrinsic_current: config.min_intrinsic_current,
+            max_intrinsic_current: config.max_intrinsic_current,
+            min_structural_drive: config.min_structural_drive,
+            max_structural_drive: config.max_structural_drive,
         }
     }
 
@@ -63,7 +80,7 @@ impl LocalHomeostasis {
         Self::new(&config.homeostasis)
     }
 
-    /// Enables or freezes local threshold updates.
+    /// Enables or freezes local maintenance updates.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
@@ -73,66 +90,101 @@ impl LocalHomeostasis {
         self.enabled
     }
 
+    /// Per-neuron period of the local maintenance clock.
+    pub const fn update_interval_us(&self) -> u64 {
+        self.update_interval_us
+    }
+
     /// Acknowledges a local spike notification from the runtime.
     ///
-    /// The core already increments the neuron's activity trace atomically when
-    /// it emits the spike, so this compatibility hook deliberately performs no
-    /// second increment.
+    /// The core increments the neuron's firing trace atomically when it emits
+    /// the spike, so this compatibility hook deliberately performs no second
+    /// increment.
     pub fn record_spike(&mut self, neuron: &Neuron, time: SimTime) -> Result<(), HomeostasisError> {
         let _ = (neuron, time);
         Ok(())
     }
 
-    /// Returns this neuron's local firing-rate estimate at `time`.
-    pub fn estimated_rate_hz(
-        &self,
-        neuron: &mut Neuron,
-        time: SimTime,
-    ) -> Result<f32, HomeostasisError> {
-        neuron.advance_to(time)?;
-        Ok(neuron.estimated_firing_rate_hz())
-    }
-
-    /// Applies one local maintenance event and reports an actual change.
+    /// Applies one local slow-maintenance event and reports an actual change.
     ///
-    /// The update is proportional to this neuron's own rate error. Positive
-    /// error raises the threshold; negative error lowers it. The core clamps the
-    /// effective threshold to the configured interval.
+    /// Every change is multiplied by elapsed simulation time since this
+    /// neuron's previous maintenance event. Therefore neither the intrinsic
+    /// state nor its regulation depends on how many unrelated runtime updates
+    /// happen between two timestamps.
     pub fn maintain(
         &mut self,
         neuron: &mut Neuron,
         time: SimTime,
-    ) -> Result<Option<ThresholdChange>, HomeostasisError> {
+    ) -> Result<Option<HomeostaticChange>, HomeostasisError> {
         if !self.enabled {
             return Ok(None);
         }
 
+        neuron.advance_to(time)?;
+        let elapsed_seconds = neuron.homeostasis_elapsed_us(time)? as f32 / 1_000_000.0;
+        let state = neuron.homeostatic_state();
         let neuron_id = neuron.id();
-        let estimated_rate_hz = self.estimated_rate_hz(neuron, time)?;
-        let old_threshold = neuron.threshold();
-        let rate_error = estimated_rate_hz - self.target_rate_hz;
-        let requested = old_threshold + self.adjustment_rate * rate_error;
-        let new_threshold = neuron
-            .set_threshold_clamped(requested, self.min_threshold, self.max_threshold)
-            .map_err(HomeostasisError::Neuron)?;
 
-        if new_threshold == old_threshold {
+        let mut requested_intrinsic_current = state.intrinsic_current;
+        let mut requested_structural_drive = state.structural_drive;
+        if state.input_avg >= self.target_input_rate {
+            // Input is available, so a firing-rate deficit diagnoses local
+            // excitability rather than missing connectivity.
+            let firing_error = state.firing_avg - self.target_rate_hz;
+            requested_intrinsic_current -=
+                self.intrinsic_adjustment_rate * firing_error * elapsed_seconds;
+
+            // Sufficient input makes an outstanding local search request less
+            // urgent. This is not topology mutation; it only relaxes the cue.
+            requested_structural_drive -= self.structural_adjustment_rate
+                * (state.input_avg - self.target_input_rate)
+                * elapsed_seconds;
+        } else {
+            let missing_input = self.target_input_rate - state.input_avg;
+            requested_structural_drive +=
+                self.structural_adjustment_rate * missing_input * elapsed_seconds;
+
+            // A neuron firing despite missing input is overexcitable. Reduce
+            // its intrinsic current more strongly than for an ordinary
+            // high-firing, adequately driven cell.
+            if state.firing_avg > self.target_rate_hz {
+                let excess_firing = state.firing_avg - self.target_rate_hz;
+                requested_intrinsic_current -= self.intrinsic_adjustment_rate
+                    * (excess_firing + missing_input)
+                    * elapsed_seconds;
+            }
+        }
+
+        let new_intrinsic_current = neuron.set_intrinsic_current_clamped(
+            requested_intrinsic_current,
+            self.min_intrinsic_current,
+            self.max_intrinsic_current,
+        )?;
+        let new_structural_drive = neuron.set_structural_drive_clamped(
+            requested_structural_drive,
+            self.min_structural_drive,
+            self.max_structural_drive,
+        )?;
+        neuron.record_homeostasis_update(time)?;
+
+        if new_intrinsic_current == state.intrinsic_current
+            && new_structural_drive == state.structural_drive
+        {
             return Ok(None);
         }
 
-        Ok(Some(ThresholdChange {
+        Ok(Some(HomeostaticChange {
             neuron_id,
-            old_threshold,
-            new_threshold,
-            estimated_rate_hz,
+            firing_avg: state.firing_avg,
+            input_avg: state.input_avg,
+            old_intrinsic_current: state.intrinsic_current,
+            new_intrinsic_current,
+            old_structural_drive: state.structural_drive,
+            new_structural_drive,
         }))
     }
 
-    /// Leaves neuron-owned activity history intact.
-    ///
-    /// This method exists for orchestration symmetry with [`crate::learning::PairStdp`]; a new
-    /// experiment should construct fresh core neurons when it needs fresh local
-    /// firing-rate traces.
+    /// Leaves neuron-owned activity and input history intact.
     pub fn clear(&mut self) {}
 }
 
@@ -155,7 +207,7 @@ mod tests {
             NeuronConfig {
                 resting_potential: 0.0,
                 reset_potential: 0.0,
-                threshold: 1.0,
+                threshold: 10.0,
                 membrane_tau_us: 20_000.0,
                 refractory_period_us: 0,
                 activity_trace_tau_us: 1_000_000.0,
@@ -168,10 +220,15 @@ mod tests {
     fn config() -> HomeostasisConfig {
         HomeostasisConfig {
             enabled: true,
-            target_rate_hz: 0.5,
-            adjustment_rate: 0.5,
-            min_threshold: 0.1,
-            max_threshold: 2.0,
+            update_interval_us: 1_000_000,
+            target_rate_hz: 1.0,
+            target_input_rate: 0.5,
+            intrinsic_adjustment_rate: 2.0,
+            structural_adjustment_rate: 3.0,
+            min_intrinsic_current: -10.0,
+            max_intrinsic_current: 10.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 10.0,
         }
     }
 
@@ -180,70 +237,55 @@ mod tests {
     }
 
     #[test]
-    fn active_neuron_raises_only_its_own_threshold() {
+    fn adequate_input_with_low_output_raises_intrinsic_current() {
         let mut homeostasis = LocalHomeostasis::new(&config());
-        let mut active = neuron(1);
-        let silent = neuron(2);
-        active
-            .integrate_input(SimTime::ZERO, 1.0)
-            .expect("valid input")
-            .expect("spike");
+        let mut cell = neuron(1);
+        cell.integrate_input(SimTime::ZERO, 1.0)
+            .expect("subthreshold input");
 
         let change = homeostasis
-            .maintain(&mut active, SimTime::ZERO)
+            .maintain(&mut cell, SimTime(100_000))
             .expect("local maintenance")
-            .expect("threshold change");
+            .expect("intrinsic adjustment");
 
-        close(change.estimated_rate_hz, 1.0);
-        close(active.threshold(), 1.25);
-        assert_eq!(silent.threshold(), 1.0);
+        assert!(change.input_avg >= 0.5);
+        assert!(change.firing_avg < 1.0);
+        close(cell.intrinsic_current(), 0.2);
+        close(cell.structural_drive(), 0.0);
     }
 
     #[test]
-    fn underactive_neuron_lowers_threshold() {
+    fn missing_input_with_low_output_raises_structural_drive_not_current() {
         let mut homeostasis = LocalHomeostasis::new(&config());
-        let mut silent = neuron(1);
+        let mut cell = neuron(1);
 
-        homeostasis
-            .maintain(&mut silent, SimTime::ZERO)
+        let change = homeostasis
+            .maintain(&mut cell, SimTime(1_000_000))
             .expect("local maintenance")
-            .expect("threshold change");
+            .expect("structural adjustment");
 
-        close(silent.threshold(), 0.75);
+        close(change.input_avg, 0.0);
+        close(cell.intrinsic_current(), 0.0);
+        close(cell.structural_drive(), 1.5);
     }
 
     #[test]
-    fn threshold_adjustment_respects_local_bounds() {
-        let mut high_gain = config();
-        high_gain.target_rate_hz = 0.0;
-        high_gain.adjustment_rate = 10.0;
-        high_gain.max_threshold = 1.5;
-        let mut homeostasis = LocalHomeostasis::new(&high_gain);
-        let mut active = neuron(1);
-        active
-            .integrate_input(SimTime::ZERO, 1.0)
-            .expect("valid input");
+    fn high_output_with_missing_input_strongly_lowers_intrinsic_current() {
+        let mut high_output_config = config();
+        high_output_config.target_rate_hz = 0.1;
+        high_output_config.target_input_rate = 5.0;
+        let mut homeostasis = LocalHomeostasis::new(&high_output_config);
+        let mut cell = neuron(1);
+        cell.set_intrinsic_current(5.0).unwrap();
+        cell.integrate_input(SimTime::ZERO, 10.0)
+            .expect("spike input");
 
         homeostasis
-            .maintain(&mut active, SimTime::ZERO)
+            .maintain(&mut cell, SimTime(1_000_000))
             .expect("local maintenance");
 
-        assert_eq!(active.threshold(), 1.5);
-    }
-
-    #[test]
-    fn firing_rate_estimate_decays_analytically_with_neuron_state() {
-        let homeostasis = LocalHomeostasis::new(&config());
-        let mut active = neuron(1);
-        active
-            .integrate_input(SimTime::ZERO, 1.0)
-            .expect("valid input");
-
-        let rate = homeostasis
-            .estimated_rate_hz(&mut active, SimTime(1_000_000))
-            .expect("forward time");
-
-        close(rate, (-1.0_f32).exp());
+        assert!(cell.intrinsic_current() < 5.0);
+        assert!(cell.structural_drive() > 0.0);
     }
 
     #[test]
@@ -251,15 +293,16 @@ mod tests {
         let mut disabled = config();
         disabled.enabled = false;
         let mut homeostasis = LocalHomeostasis::new(&disabled);
-        let mut neuron = neuron(1);
+        let mut cell = neuron(1);
 
         assert_eq!(
             homeostasis
-                .maintain(&mut neuron, SimTime(100))
+                .maintain(&mut cell, SimTime(100))
                 .expect("disabled is a no-op"),
             None
         );
-        assert_eq!(neuron.last_update(), SimTime::ZERO);
-        assert_eq!(neuron.threshold(), 1.0);
+        assert_eq!(cell.last_update(), SimTime::ZERO);
+        assert_eq!(cell.intrinsic_current(), 0.0);
+        assert_eq!(cell.structural_drive(), 0.0);
     }
 }

@@ -62,6 +62,7 @@ fn simultaneous_excitation_and_inhibition_are_integrated_atomically() {
         assert_eq!(report.spikes_emitted, 0);
         assert_eq!(neuron.spike_count(), 0);
         assert_close(neuron.membrane_potential(), 0.9);
+        assert_close(neuron.input_trace(), 1.3);
         assert!(
             !simulation
                 .event_log()

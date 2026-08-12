@@ -8,7 +8,7 @@ task-specific neuron behavior.
 The first experiment trains a small recurrent network on the repeated temporal
 sequence `A → B → C → D`, freezes its weights, then presents only `A`. Four
 controlled groups compare ordered learning, frozen weights, randomized input,
-and ordered learning with local threshold homeostasis. The default executable
+and ordered learning with local cellular/structural homeostasis. The default executable
 study uses six paired, independently seeded initial weight states, repeats every
 frozen probe and complete run exactly, and reports one-sided exact sign tests.
 

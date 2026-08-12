@@ -120,9 +120,16 @@ pub enum EventKind {
         /// Signed, distance-attenuated contribution captured for this arrival.
         amplitude: f32,
     },
-    /// Local maintenance of one neuron's own activity estimate and threshold.
+    /// Local maintenance of one neuron's own input/output estimates and slow
+    /// cellular or structural state.
     Homeostasis {
         /// Neuron whose local state is maintained.
+        neuron_id: NeuronId,
+    },
+    /// Predicted local threshold crossing caused by a neuron's continuous
+    /// intrinsic current. This is scheduled only for that one neuron.
+    IntrinsicSpike {
+        /// Neuron whose intrinsic state predicted the crossing.
         neuron_id: NeuronId,
     },
 }

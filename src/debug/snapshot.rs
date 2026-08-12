@@ -16,6 +16,14 @@ pub struct NeuronSnapshot {
     pub membrane_potential: f32,
     /// Current local threshold.
     pub threshold: f32,
+    /// Local exponentially weighted firing-rate estimate in hertz.
+    pub firing_avg: f32,
+    /// Local exponentially weighted absolute-input estimate.
+    pub input_avg: f32,
+    /// Constant local intrinsic current in potential units per second.
+    pub intrinsic_current: f32,
+    /// Local request signal for future structural plasticity.
+    pub structural_drive: f32,
     /// Total emitted spikes.
     pub spike_count: u64,
 }
@@ -56,6 +64,10 @@ impl NetworkSnapshot {
                 position: neuron.position(),
                 membrane_potential: neuron.membrane_potential(),
                 threshold: neuron.threshold(),
+                firing_avg: neuron.estimated_firing_rate_hz(),
+                input_avg: neuron.estimated_input_rate(),
+                intrinsic_current: neuron.intrinsic_current(),
+                structural_drive: neuron.structural_drive(),
                 spike_count: neuron.spike_count(),
             })
             .collect();
@@ -152,6 +164,10 @@ mod tests {
                     position: Position3D::ORIGIN,
                     membrane_potential: 0.0,
                     threshold: 1.0,
+                    firing_avg: 0.0,
+                    input_avg: 0.0,
+                    intrinsic_current: 0.0,
+                    structural_drive: 0.0,
                     spike_count: 0,
                 },
                 NeuronSnapshot {
@@ -159,6 +175,10 @@ mod tests {
                     position: Position3D::ORIGIN,
                     membrane_potential: 0.0,
                     threshold: 1.0,
+                    firing_avg: 0.0,
+                    input_avg: 0.0,
+                    intrinsic_current: 0.0,
+                    structural_drive: 0.0,
                     spike_count: 0,
                 },
             ],

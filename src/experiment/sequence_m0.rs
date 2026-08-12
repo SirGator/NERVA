@@ -96,8 +96,6 @@ pub struct M0ExperimentConfig {
     pub inhibitory_delay_us: u64,
     /// Probe duration after presenting only A.
     pub probe_duration_us: u64,
-    /// Period of local threshold-maintenance events in G4.
-    pub homeostasis_interval_us: u64,
     /// Half-width of each expected B/C/D probe window.
     pub probe_tolerance_us: u64,
     /// Final no-spike interval required for a stable probe.
@@ -128,10 +126,11 @@ impl Default for M0ExperimentConfig {
             refractory_period_us: 1_000,
             activity_trace_tau_us: 250_000.0,
         };
-        dsvlm.learning.homeostasis.min_threshold = 0.8;
-        dsvlm.learning.homeostasis.max_threshold = 1.2;
+        dsvlm.learning.homeostasis.update_interval_us = 50_000;
         dsvlm.learning.homeostasis.target_rate_hz = 10.0;
-        dsvlm.learning.homeostasis.adjustment_rate = 0.0001;
+        dsvlm.learning.homeostasis.target_input_rate = 1.0;
+        dsvlm.learning.homeostasis.intrinsic_adjustment_rate = 0.001;
+        dsvlm.learning.homeostasis.structural_adjustment_rate = 0.01;
 
         Self {
             dsvlm,
@@ -146,7 +145,6 @@ impl Default for M0ExperimentConfig {
             inhibitory_feedback_weight: 0.05,
             inhibitory_delay_us: 1_000,
             probe_duration_us: 60_000,
-            homeostasis_interval_us: 50_000,
             probe_tolerance_us: 2,
             quiet_window_us: 10_000,
         }
@@ -170,7 +168,6 @@ impl M0ExperimentConfig {
             ("sequence_delay_us", self.sequence_delay_us),
             ("inhibitory_delay_us", self.inhibitory_delay_us),
             ("probe_duration_us", self.probe_duration_us),
-            ("homeostasis_interval_us", self.homeostasis_interval_us),
             ("quiet_window_us", self.quiet_window_us),
         ] {
             if value == 0 {
@@ -354,21 +351,6 @@ impl M0Experiment {
         }
         debug_assert!(environment.is_exhausted());
 
-        if self.group == M0Group::OrderedHomeostasis {
-            let mut at = SimTime(self.config.homeostasis_interval_us);
-            while at < training_time {
-                for neuron in pattern_neurons.values().copied() {
-                    simulation
-                        .schedule_homeostasis(at, neuron)
-                        .map_err(runtime_error)?;
-                }
-                let Some(next) = at.checked_add_us(self.config.homeostasis_interval_us) else {
-                    break;
-                };
-                at = next;
-            }
-        }
-
         // Never let a recurrent failure run forever. Residual events after this
         // explicit settling horizon are retained as a failed stability metric.
         let training_deadline = checked_advance(
@@ -380,7 +362,7 @@ impl M0Experiment {
             .run_until(training_deadline)
             .map_err(runtime_error)?;
         let training_events = simulation.event_log().to_vec();
-        let training_stable = simulation.pending_event_count() == 0
+        let training_stable = !simulation.has_pending_non_homeostasis_events()
             && !training_events.iter().any(|event| {
                 matches!(
                     event,

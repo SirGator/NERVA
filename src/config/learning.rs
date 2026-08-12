@@ -2,31 +2,71 @@
 
 use super::{ConfigError, non_negative, ordered_range, positive};
 
-/// Parameters for local threshold homeostasis.
+/// Parameters for local cellular and structural homeostasis.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HomeostasisConfig {
-    /// Whether local threshold maintenance events are active.
+    /// Whether local maintenance events are active.
     pub enabled: bool,
+    /// Time between two maintenance events of the same neuron, in microseconds.
+    ///
+    /// Each neuron owns and reschedules its own deadline. This is a local slow
+    /// clock, not a population-wide simulation tick.
+    pub update_interval_us: u64,
     /// Per-neuron target firing rate in hertz.
     pub target_rate_hz: f32,
-    /// Threshold change per unit local rate error.
-    pub adjustment_rate: f32,
-    /// Inclusive lower threshold bound.
-    pub min_threshold: f32,
-    /// Inclusive upper threshold bound.
-    pub max_threshold: f32,
+    /// Minimum locally observed input magnitude per second that counts as
+    /// adequate drive for intrinsic excitability regulation.
+    pub target_input_rate: f32,
+    /// Intrinsic-current change per second and per hertz of firing-rate error.
+    ///
+    /// The current itself is measured in potential units per second. Applying
+    /// this rate with elapsed simulation time keeps regulation independent of
+    /// how often unrelated events happen to touch a neuron.
+    pub intrinsic_adjustment_rate: f32,
+    /// Structural-drive change per second and per missing input-rate unit.
+    ///
+    /// Structural drive is a local request signal for a future growth/pruning
+    /// slice; it does not mutate topology in the M0 core.
+    pub structural_adjustment_rate: f32,
+    /// Inclusive lower intrinsic-current bound.
+    pub min_intrinsic_current: f32,
+    /// Inclusive upper intrinsic-current bound.
+    pub max_intrinsic_current: f32,
+    /// Inclusive lower structural-drive bound.
+    pub min_structural_drive: f32,
+    /// Inclusive upper structural-drive bound.
+    pub max_structural_drive: f32,
 }
 
 impl HomeostasisConfig {
     /// Validates local-only homeostasis parameters.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.update_interval_us == 0 {
+            return Err(ConfigError::ZeroValue {
+                field: "homeostasis.update_interval_us",
+            });
+        }
         non_negative(self.target_rate_hz, "homeostasis.target_rate_hz")?;
-        non_negative(self.adjustment_rate, "homeostasis.adjustment_rate")?;
+        non_negative(self.target_input_rate, "homeostasis.target_input_rate")?;
+        non_negative(
+            self.intrinsic_adjustment_rate,
+            "homeostasis.intrinsic_adjustment_rate",
+        )?;
+        non_negative(
+            self.structural_adjustment_rate,
+            "homeostasis.structural_adjustment_rate",
+        )?;
         ordered_range(
-            self.min_threshold,
-            "homeostasis.min_threshold",
-            self.max_threshold,
-            "homeostasis.max_threshold",
+            self.min_intrinsic_current,
+            "homeostasis.min_intrinsic_current",
+            self.max_intrinsic_current,
+            "homeostasis.max_intrinsic_current",
+        )?;
+        ordered_range(
+            self.min_structural_drive,
+            "homeostasis.min_structural_drive",
+            self.max_structural_drive,
+            "homeostasis.max_structural_drive",
         )?;
 
         Ok(())
@@ -37,10 +77,15 @@ impl Default for HomeostasisConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            update_interval_us: 100_000,
             target_rate_hz: 5.0,
-            adjustment_rate: 0.01,
-            min_threshold: -60.0,
-            max_threshold: -40.0,
+            target_input_rate: 1.0,
+            intrinsic_adjustment_rate: 0.001,
+            structural_adjustment_rate: 0.01,
+            min_intrinsic_current: -1_000.0,
+            max_intrinsic_current: 1_000.0,
+            min_structural_drive: 0.0,
+            max_structural_drive: 1_000.0,
         }
     }
 }
@@ -64,7 +109,7 @@ pub struct LearningConfig {
     pub min_weight: f32,
     /// Inclusive upper non-negative weight bound.
     pub max_weight: f32,
-    /// Optional local threshold stabilization parameters.
+    /// Optional local cellular and structural homeostasis parameters.
     pub homeostasis: HomeostasisConfig,
 }
 
@@ -150,7 +195,7 @@ mod tests {
     fn disabled_homeostasis_still_has_reproducible_valid_parameters() {
         let config = HomeostasisConfig {
             enabled: false,
-            adjustment_rate: f32::NAN,
+            intrinsic_adjustment_rate: f32::NAN,
             ..HomeostasisConfig::default()
         };
 
@@ -158,9 +203,9 @@ mod tests {
     }
 
     #[test]
-    fn validates_finite_threshold_range() {
+    fn validates_finite_intrinsic_current_range() {
         let config = HomeostasisConfig {
-            min_threshold: f32::NEG_INFINITY,
+            min_intrinsic_current: f32::NEG_INFINITY,
             ..HomeostasisConfig::default()
         };
 
@@ -168,5 +213,20 @@ mod tests {
             config.validate(),
             Err(ConfigError::NonFinite { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_a_zero_local_maintenance_interval() {
+        let config = HomeostasisConfig {
+            update_interval_us: 0,
+            ..HomeostasisConfig::default()
+        };
+
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::ZeroValue {
+                field: "homeostasis.update_interval_us"
+            })
+        );
     }
 }

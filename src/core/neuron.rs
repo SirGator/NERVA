@@ -44,6 +44,22 @@ pub enum NeuronRole {
     Motor,
 }
 
+/// Locally observed state used by cellular and future structural plasticity.
+///
+/// Both averages are exponentially decayed, neuron-owned quantities. No
+/// population mean or global error signal is involved.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HomeostaticState {
+    /// Estimated firing rate in hertz.
+    pub firing_avg: f32,
+    /// Estimated absolute input magnitude per second.
+    pub input_avg: f32,
+    /// Constant intrinsic current in potential units per second.
+    pub intrinsic_current: f32,
+    /// Local request signal for future connection growth or pruning.
+    pub structural_drive: f32,
+}
+
 /// One LIF cell with immutable identity/geometry/parameters and local state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Neuron {
@@ -56,9 +72,20 @@ pub struct Neuron {
     last_update: SimTime,
     refractory_until: SimTime,
     activity_trace: f32,
+    input_trace: f32,
     last_spike: Option<SimTime>,
     spike_count: u64,
     threshold: f32,
+    /// Constant local current, integrated analytically over elapsed time.
+    intrinsic_current: f32,
+    /// Local future-facing signal; it never directly mutates graph topology.
+    structural_drive: f32,
+    last_homeostasis_update: SimTime,
+    next_homeostasis_update: Option<SimTime>,
+    next_intrinsic_spike: Option<SimTime>,
+    /// Scheduler sequence for the prediction above, allowing eager removal
+    /// when a local input or current adjustment supersedes it.
+    next_intrinsic_spike_sequence: Option<u64>,
 }
 
 impl Neuron {
@@ -84,9 +111,16 @@ impl Neuron {
             last_update: start_time,
             refractory_until: start_time,
             activity_trace: 0.0,
+            input_trace: 0.0,
             last_spike: None,
             spike_count: 0,
             threshold: params.threshold,
+            intrinsic_current: 0.0,
+            structural_drive: 0.0,
+            last_homeostasis_update: start_time,
+            next_homeostasis_update: None,
+            next_intrinsic_spike: None,
+            next_intrinsic_spike_sequence: None,
         })
     }
 
@@ -135,6 +169,11 @@ impl Neuron {
         self.activity_trace
     }
 
+    /// Local exponentially decaying trace of received input magnitudes.
+    pub const fn input_trace(&self) -> f32 {
+        self.input_trace
+    }
+
     /// Most recent spike timestamp, if any.
     pub const fn last_spike(&self) -> Option<SimTime> {
         self.last_spike
@@ -145,9 +184,47 @@ impl Neuron {
         self.spike_count
     }
 
-    /// Current local firing threshold, including homeostatic changes.
+    /// Current local firing threshold, including controlled adaptations.
     pub const fn threshold(&self) -> f32 {
         self.threshold
+    }
+
+    /// Constant intrinsic current in potential units per second.
+    pub const fn intrinsic_current(&self) -> f32 {
+        self.intrinsic_current
+    }
+
+    /// Local structural-plasticity request signal.
+    pub const fn structural_drive(&self) -> f32 {
+        self.structural_drive
+    }
+
+    /// Snapshot of the quantities used by local homeostasis.
+    pub fn homeostatic_state(&self) -> HomeostaticState {
+        HomeostaticState {
+            firing_avg: self.estimated_firing_rate_hz(),
+            input_avg: self.estimated_input_rate(),
+            intrinsic_current: self.intrinsic_current,
+            structural_drive: self.structural_drive,
+        }
+    }
+
+    /// Timestamp of the next local maintenance event, if its clock is active.
+    pub const fn next_homeostasis_update(&self) -> Option<SimTime> {
+        self.next_homeostasis_update
+    }
+
+    /// Timestamp of the currently predicted autonomous threshold crossing.
+    pub const fn next_intrinsic_spike(&self) -> Option<SimTime> {
+        self.next_intrinsic_spike
+    }
+
+    /// Scheduler sequence for the currently predicted autonomous crossing.
+    ///
+    /// This is runtime bookkeeping rather than neural state. It is paired
+    /// with [`Self::next_intrinsic_spike`] whenever a prediction is queued.
+    pub const fn next_intrinsic_spike_sequence(&self) -> Option<u64> {
+        self.next_intrinsic_spike_sequence
     }
 
     /// Whether a spike is prohibited at `time` by the local refractory state.
@@ -155,7 +232,12 @@ impl Neuron {
         time < self.refractory_until
     }
 
-    /// Analytically advances membrane potential and activity trace to `time`.
+    /// Analytically advances continuous local state to `time`.
+    ///
+    /// The intrinsic current is a current per simulation second, not an amount
+    /// added per update. It shifts the LIF equilibrium by `I * tau`, so calling
+    /// this once or through many unrelated event timestamps gives the same
+    /// membrane potential at the same final time.
     pub fn advance_to(&mut self, time: SimTime) -> Result<(), NeuronError> {
         let elapsed_us =
             time.duration_since(self.last_update)
@@ -168,14 +250,31 @@ impl Neuron {
             return Ok(());
         }
 
+        let intrinsic_equilibrium = self.params.resting_potential
+            + self.intrinsic_current * (self.params.membrane_tau_us / 1_000_000.0);
+        if !intrinsic_equilibrium.is_finite() {
+            return Err(NeuronError::NonFiniteIntrinsicEquilibrium(
+                intrinsic_equilibrium,
+            ));
+        }
         self.membrane_potential = decay_towards(
             self.membrane_potential,
-            self.params.resting_potential,
+            intrinsic_equilibrium,
             elapsed_us,
             self.params.membrane_tau_us,
         );
+        if !self.membrane_potential.is_finite() {
+            return Err(NeuronError::NonFiniteMembranePotential(
+                self.membrane_potential,
+            ));
+        }
         self.activity_trace = decay_to_zero(
             self.activity_trace,
+            elapsed_us,
+            self.params.activity_trace_tau_us,
+        );
+        self.input_trace = decay_to_zero(
+            self.input_trace,
             elapsed_us,
             self.params.activity_trace_tau_us,
         );
@@ -199,7 +298,31 @@ impl Neuron {
             return Err(NeuronError::NonFiniteInput(summed_input));
         }
 
+        self.integrate_input_with_magnitude(time, summed_input, summed_input.abs())
+    }
+
+    /// Applies an already-aggregated input together with its total absolute
+    /// arrival magnitude.
+    ///
+    /// Runtime timestamp batching can cancel an excitatory and inhibitory
+    /// contribution in the membrane sum. The separate magnitude still records
+    /// that the neuron received substantial local input, allowing homeostasis
+    /// to distinguish inhibition from disconnection.
+    pub fn integrate_input_with_magnitude(
+        &mut self,
+        time: SimTime,
+        summed_input: f32,
+        input_magnitude: f32,
+    ) -> Result<Option<Spike>, NeuronError> {
+        if !summed_input.is_finite() {
+            return Err(NeuronError::NonFiniteInput(summed_input));
+        }
+        if !input_magnitude.is_finite() || input_magnitude < 0.0 {
+            return Err(NeuronError::InvalidInputMagnitude(input_magnitude));
+        }
+
         self.advance_to(time)?;
+        self.observe_input(input_magnitude);
         if self.is_refractory_at(time) {
             return Ok(None);
         }
@@ -276,8 +399,143 @@ impl Neuron {
 
     /// Converts the local exponential trace to a per-second rate estimate.
     pub fn estimated_firing_rate_hz(&self) -> f32 {
-        self.activity_trace * 1_000_000.0 / self.params.activity_trace_tau_us
+        (f64::from(self.activity_trace) * 1_000_000.0
+            / f64::from(self.params.activity_trace_tau_us))
+        .min(f64::from(f32::MAX)) as f32
     }
+
+    /// Converts the local absolute-input trace to a per-second estimate.
+    pub fn estimated_input_rate(&self) -> f32 {
+        (f64::from(self.input_trace) * 1_000_000.0 / f64::from(self.params.activity_trace_tau_us))
+            .min(f64::from(f32::MAX)) as f32
+    }
+
+    /// Sets the local intrinsic current after validating finiteness.
+    pub fn set_intrinsic_current(&mut self, intrinsic_current: f32) -> Result<(), NeuronError> {
+        if !intrinsic_current.is_finite() {
+            return Err(NeuronError::InvalidHomeostaticValue {
+                field: "intrinsic_current",
+                value: intrinsic_current,
+            });
+        }
+        self.intrinsic_current = intrinsic_current;
+        Ok(())
+    }
+
+    /// Clamps and applies a requested local intrinsic current.
+    pub fn set_intrinsic_current_clamped(
+        &mut self,
+        requested: f32,
+        min: f32,
+        max: f32,
+    ) -> Result<f32, NeuronError> {
+        let intrinsic_current =
+            validate_clamped_homeostatic_value("intrinsic_current", requested, min, max)?;
+        self.intrinsic_current = intrinsic_current;
+        Ok(intrinsic_current)
+    }
+
+    /// Clamps and applies a requested local structural-drive value.
+    pub fn set_structural_drive_clamped(
+        &mut self,
+        requested: f32,
+        min: f32,
+        max: f32,
+    ) -> Result<f32, NeuronError> {
+        let structural_drive =
+            validate_clamped_homeostatic_value("structural_drive", requested, min, max)?;
+        self.structural_drive = structural_drive;
+        Ok(structural_drive)
+    }
+
+    /// Elapsed time since this neuron's previous local maintenance update.
+    pub fn homeostasis_elapsed_us(&self, time: SimTime) -> Result<u64, NeuronError> {
+        time.duration_since(self.last_homeostasis_update)
+            .ok_or(NeuronError::TimeWentBackwards {
+                current: self.last_homeostasis_update,
+                requested: time,
+            })
+    }
+
+    /// Marks a completed local maintenance update.
+    pub fn record_homeostasis_update(&mut self, time: SimTime) -> Result<(), NeuronError> {
+        self.homeostasis_elapsed_us(time)?;
+        self.last_homeostasis_update = time;
+        Ok(())
+    }
+
+    /// Resets the elapsed-time anchor used by the next local maintenance
+    /// update without changing any cellular or structural state.
+    ///
+    /// The runtime calls this when local homeostasis is re-enabled so a
+    /// disabled interval is not retrospectively integrated as regulation
+    /// time on the first newly enabled maintenance event.
+    pub fn reset_homeostasis_time_anchor(&mut self, time: SimTime) -> Result<(), NeuronError> {
+        self.record_homeostasis_update(time)
+    }
+
+    /// Records the next local maintenance deadline owned by this neuron.
+    pub fn set_next_homeostasis_update(&mut self, time: Option<SimTime>) {
+        self.next_homeostasis_update = time;
+    }
+
+    /// Records the currently scheduled autonomous threshold-crossing event
+    /// and its scheduler sequence.
+    pub fn set_next_intrinsic_spike(&mut self, time: Option<SimTime>, sequence: Option<u64>) {
+        debug_assert_eq!(time.is_some(), sequence.is_some());
+        self.next_intrinsic_spike = time;
+        self.next_intrinsic_spike_sequence = sequence;
+    }
+
+    /// Predicts the next threshold crossing caused solely by the constant
+    /// intrinsic current, starting from the already current local state.
+    pub fn predicted_intrinsic_spike_at(&self, now: SimTime) -> Option<SimTime> {
+        if now != self.last_update || self.membrane_potential >= self.threshold {
+            return None;
+        }
+
+        let tau_seconds = self.params.membrane_tau_us / 1_000_000.0;
+        let equilibrium = self.params.resting_potential + self.intrinsic_current * tau_seconds;
+        if !equilibrium.is_finite() || equilibrium <= self.threshold {
+            return None;
+        }
+
+        let ratio = (self.threshold - equilibrium) / (self.membrane_potential - equilibrium);
+        if !(0.0..1.0).contains(&ratio) {
+            return None;
+        }
+        let elapsed_us = (-self.params.membrane_tau_us * ratio.ln()).ceil();
+        if !elapsed_us.is_finite() || elapsed_us > u64::MAX as f32 {
+            return None;
+        }
+        let crossing = now.checked_add_us((elapsed_us as u64).max(1))?;
+        Some(crossing.max(self.refractory_until))
+    }
+
+    fn observe_input(&mut self, input_magnitude: f32) {
+        // Input history is a diagnostic/homeostatic estimate. Saturating it
+        // preserves valid membrane dynamics even for an extreme but finite
+        // simultaneous batch such as `MAX + -MAX`.
+        self.input_trace = ((f64::from(self.input_trace) + f64::from(input_magnitude))
+            .min(f64::from(f32::MAX))) as f32;
+    }
+}
+
+fn validate_clamped_homeostatic_value(
+    field: &'static str,
+    requested: f32,
+    min: f32,
+    max: f32,
+) -> Result<f32, NeuronError> {
+    if !requested.is_finite() || !min.is_finite() || !max.is_finite() || min > max {
+        return Err(NeuronError::InvalidHomeostaticBounds {
+            field,
+            requested,
+            min,
+            max,
+        });
+    }
+    Ok(requested.clamp(min, max))
 }
 
 /// Invalid construction or temporal evolution of a neuron.
@@ -296,8 +554,12 @@ pub enum NeuronError {
     },
     /// An input contribution is NaN or infinite.
     NonFiniteInput(f32),
+    /// An absolute input magnitude is negative, NaN, or infinite.
+    InvalidInputMagnitude(f32),
     /// Finite operands overflowed the membrane representation.
     NonFiniteMembranePotential(f32),
+    /// A current and membrane time constant produced a non-finite equilibrium.
+    NonFiniteIntrinsicEquilibrium(f32),
     /// Adding the refractory duration exceeded simulation time.
     RefractoryTimeOverflow {
         /// Timestamp at which the spike would have occurred.
@@ -309,6 +571,24 @@ pub enum NeuronError {
     InvalidThreshold(f32),
     /// Threshold clamping inputs are non-finite or reversed.
     InvalidThresholdBounds {
+        /// Requested value.
+        requested: f32,
+        /// Inclusive lower bound.
+        min: f32,
+        /// Inclusive upper bound.
+        max: f32,
+    },
+    /// A local current or structural value was non-finite.
+    InvalidHomeostaticValue {
+        /// Name of the local quantity.
+        field: &'static str,
+        /// Rejected value.
+        value: f32,
+    },
+    /// Requested homeostatic value or inclusive bounds were invalid.
+    InvalidHomeostaticBounds {
+        /// Name of the local quantity.
+        field: &'static str,
         /// Requested value.
         requested: f32,
         /// Inclusive lower bound.
@@ -332,8 +612,20 @@ impl fmt::Display for NeuronError {
             Self::NonFiniteInput(value) => {
                 write!(formatter, "neuron input must be finite, got {value}")
             }
+            Self::InvalidInputMagnitude(value) => {
+                write!(
+                    formatter,
+                    "input magnitude must be finite and non-negative, got {value}"
+                )
+            }
             Self::NonFiniteMembranePotential(value) => {
                 write!(formatter, "membrane potential became non-finite: {value}")
+            }
+            Self::NonFiniteIntrinsicEquilibrium(value) => {
+                write!(
+                    formatter,
+                    "intrinsic-current equilibrium became non-finite: {value}"
+                )
             }
             Self::RefractoryTimeOverflow {
                 spike_time,
@@ -353,6 +645,18 @@ impl fmt::Display for NeuronError {
             } => write!(
                 formatter,
                 "invalid threshold clamp: requested={requested}, min={min}, max={max}"
+            ),
+            Self::InvalidHomeostaticValue { field, value } => {
+                write!(formatter, "{field} must be finite, got {value}")
+            }
+            Self::InvalidHomeostaticBounds {
+                field,
+                requested,
+                min,
+                max,
+            } => write!(
+                formatter,
+                "invalid {field} clamp: requested={requested}, min={min}, max={max}"
             ),
         }
     }
@@ -403,6 +707,27 @@ mod tests {
         neuron.advance_to(SimTime(10)).expect("forward time");
 
         close(neuron.membrane_potential(), 0.5 / std::f32::consts::E);
+    }
+
+    #[test]
+    fn intrinsic_current_depends_on_elapsed_time_not_update_count() {
+        let mut one_update = neuron(Polarity::Excitatory);
+        let mut many_updates = one_update.clone();
+        one_update.set_intrinsic_current(100_000.0).unwrap();
+        many_updates.set_intrinsic_current(100_000.0).unwrap();
+
+        one_update.advance_to(SimTime(10)).unwrap();
+        for time in [SimTime(1), SimTime(4), SimTime(10)] {
+            many_updates.advance_to(time).unwrap();
+        }
+
+        let expected = 1.0 - (-1.0_f32).exp();
+        close(one_update.membrane_potential(), expected);
+        close(many_updates.membrane_potential(), expected);
+        close(
+            one_update.membrane_potential(),
+            many_updates.membrane_potential(),
+        );
     }
 
     #[test]
