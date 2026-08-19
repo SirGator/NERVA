@@ -12,7 +12,12 @@ pub enum MappingError {
     /// A stable fiber ID was inserted twice.
     DuplicateFiber(FiberId),
     /// A root channel was mapped twice.
-    DuplicateChannel { root: RootId, channel: u16 },
+    DuplicateChannel {
+        /// Root containing the duplicate channel.
+        root: RootId,
+        /// Duplicate channel number.
+        channel: u16,
+    },
     /// The requested fiber does not exist.
     UnknownFiber(FiberId),
     /// The requested fiber has the wrong transport direction.

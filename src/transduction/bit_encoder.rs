@@ -1,10 +1,8 @@
-//! Deterministic two-channel encoder for [`BitWorld`](crate::environment::BitWorld).
+//! Deterministic two-channel encoder for binary observations.
 
 use std::{error::Error, fmt};
 
-use crate::environment::Observation;
-
-use super::{ChannelSpike, Encoder, EncodingError};
+use super::{ChannelSpike, Encoder, EncodingError, Observation};
 
 /// Invalid fixed bit-channel encoding parameters.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -102,7 +100,7 @@ impl Encoder for BitEncoder {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::SimTime;
+    use crate::{core::SimTime, transduction::Pattern};
 
     use super::*;
 
@@ -132,7 +130,7 @@ mod tests {
             BitEncoder::default()
                 .encode(&Observation::Pattern {
                     at: SimTime::ZERO,
-                    pattern: crate::environment::Pattern::A,
+                    pattern: Pattern::A,
                 })
                 .unwrap(),
             Vec::new()

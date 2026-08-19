@@ -1,50 +1,9 @@
-//! Stable identifiers. Geometry is deliberately absent from identity.
+//! Compatibility exports for stable identities used by the M0 core.
+//!
+//! The canonical definitions live in [`crate::primitives`], allowing later
+//! layers to share identities without depending on core neuron logic.
 
-use std::fmt;
-
-macro_rules! id_type {
-    ($name:ident, $description:literal) => {
-        #[doc = $description]
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub struct $name(pub u64);
-
-        impl $name {
-            /// Wraps the stable integer representation.
-            pub const fn new(value: u64) -> Self {
-                Self(value)
-            }
-
-            /// Returns the stable integer representation.
-            pub const fn get(self) -> u64 {
-                self.0
-            }
-        }
-
-        impl From<u64> for $name {
-            fn from(value: u64) -> Self {
-                Self(value)
-            }
-        }
-
-        impl From<$name> for u64 {
-            fn from(value: $name) -> Self {
-                value.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.0.fmt(formatter)
-            }
-        }
-    };
-}
-
-id_type!(NeuronId, "Stable identity of one neuron within a network.");
-id_type!(
-    SynapseId,
-    "Stable identity of one directed synapse within a network."
-);
+pub use crate::primitives::{NeuronId, SynapseId};
 
 #[cfg(test)]
 mod tests {

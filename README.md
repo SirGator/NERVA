@@ -22,15 +22,23 @@ cargo run --example m0_sequence
 The complete architectural rules, slice responsibilities, experiment design,
 and success criteria are documented in
 [`DSVLM_SLICE_ARCHITECTURE.md`](DSVLM_SLICE_ARCHITECTURE.md).
+The currently compiled dependency layers and consolidation decisions are kept
+in [`docs/architecture.md`](docs/architecture.md).
 
 ## Public slices
 
-- `config`, `math`, and `core`: validated parameters and state only
-- `runtime`: deterministic timestamp batches and spike propagation
+- `primitives`, `math`, and `config`: policy-free foundations and validation
+- `core`: neurons, synapses, spikes, and deterministic graph state
 - `learning`: local Pair-STDP and per-neuron homeostasis
+- `runtime`: deterministic timestamp batches and spike propagation
 - `roots`, `transduction`, and `nerves`: fixed external connections
 - `environment` and `experiment`: reproducible M0 orchestration
 - feature-gated `metrics`, `debug`, `visualization`, and post-M0 `development`
+
+The typed scalar primitives (`Potential`, `Threshold`, `Weight`,
+`SignalStrength`, and related domains) prepare a gradual migration. Active M0
+state still uses raw `f32` in several paths; each path will be converted end to
+end instead of mixing representations within one invariant.
 
 Weights are non-negative magnitudes. Excitatory or inhibitory effect is always
 derived from the presynaptic neuron's polarity, so learning cannot flip a

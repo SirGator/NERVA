@@ -1,6 +1,8 @@
 //! Motor-root output decoders.
 
-use crate::{environment::Action, roots::MotorOutput};
+use crate::roots::MotorOutput;
+
+use super::Action;
 
 /// Converts observed motor-channel spikes into environment actions.
 pub trait Decoder {

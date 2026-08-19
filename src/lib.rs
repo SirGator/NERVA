@@ -18,6 +18,8 @@ pub mod learning;
 pub mod math;
 /// Fixed nerve fibers, bundles, mappings and routing.
 pub mod nerves;
+/// Policy-free identities, values, geometry, and exact simulation time.
+pub mod primitives;
 /// Stable sensory and motor connection points.
 pub mod roots;
 /// Deterministic event scheduling and simulation.

@@ -58,6 +58,15 @@ dsvlm/
 │   │   ├── mod.rs
 │   │   ├── position.rs
 │   │   └── decay.rs
+│   ├── primitives/           # elementare Typen ohne Fachlogik
+│   │   ├── mod.rs
+│   │   ├── ids.rs
+│   │   ├── time.rs
+│   │   ├── signal.rs
+│   │   ├── potential.rs
+│   │   ├── weight.rs
+│   │   ├── position.rs
+│   │   └── concentration.rs
 │   ├── core/
 │   │   ├── mod.rs
 │   │   ├── ids.rs
@@ -89,7 +98,8 @@ dsvlm/
 │   │   ├── mod.rs
 │   │   ├── encoder.rs
 │   │   ├── decoder.rs
-│   │   └── pattern_encoder.rs
+│   │   ├── pattern_encoder.rs
+│   │   └── types.rs
 │   ├── nerves/
 │   │   ├── mod.rs
 │   │   ├── fiber.rs
@@ -138,20 +148,29 @@ dsvlm/
 
 `development/` wird bereits als Grenze vorgesehen, aber seine Logik bleibt in M0 deaktiviert. So muss der funktionierende Core später nicht umgebaut werden.
 
+`primitives/` enthält ausschließlich Identitäten, die mikrosekundengenaue
+Simulationszeit, typisierte Skalarwerte und Positionen. `NeuronId`, `SynapseId`,
+`SimTime` und `Position3` sind dort kanonisch definiert. Die bisherigen Pfade
+über `core` beziehungsweise `math::Position3D` bleiben kompatible Re-Exports.
+Die typisierten Skalarwerte bereiten eine schrittweise Migration vor; aktive
+M0-Pfade verwenden teilweise weiterhin `f32` und werden jeweils vollständig
+über alle beteiligten Schichten umgestellt.
+
 ## 5. Slices und ihre Verantwortung
 
 | Slice | Aufgabe | Darf nicht |
 |---|---|---|
+| `primitives` | Identitäten, Zeit, Fachwerte und Positionen typisieren | Neuronen-, Netzwerk-, Event-, Runtime- oder Lernlogik enthalten |
 | `config` | Validierte Parameter und Seeds bereitstellen | Laufzeitzustand oder Lernlogik enthalten |
 | `math` | Positionen, Distanzen und zeitlichen Zerfall berechnen | Neuronen oder Netzwerke verwalten |
 | `core` | Neuronen, Synapsen, Spikes, IDs und Graphzustand darstellen | Scheduler, Sensorformate oder konkrete Lernregel kennen |
-| `runtime` | Ereignisse kausal und deterministisch ausführen | Ein Lernziel oder eine Netzstruktur vorgeben |
 | `learning` | Lokale synaptische und zelluläre Plastizität anwenden | Die gesamte Aktivität oder globale Fehlerwerte auswerten |
+| `development` | Spätere lokale Entwicklung, Differenzierung und Wachstum kapseln | Als globaler Bauplan konkrete Synapsen befehlen |
+| `runtime` | Ereignisse kausal und deterministisch ausführen | Ein Lernziel oder eine Netzstruktur vorgeben |
 | `roots` | Stabile Sensor- und Motoranschlüsse nach außen darstellen | Interne Netztopologie oder STDP verwalten |
 | `transduction` | Rohdaten in Spike-Muster und Motor-Spikes in Ausgaben übersetzen | Direkt Neuronenzustände setzen |
 | `nerves` | Fasern, Bündel, feste Zuordnungen und Leitungsverzögerungen verwalten | Bedeutung der transportierten Signale interpretieren |
 | `environment` | Test- oder reale Umgebungen über ein neutrales Interface anbinden | Bestandteil der neuronalen Lernlogik sein |
-| `development` | Spätere lokale Entwicklung, Differenzierung und Wachstum kapseln | Als globaler Bauplan konkrete Synapsen befehlen |
 | `metrics` | Messergebnisse aus Ereignissen berechnen | Simulation beeinflussen |
 | `debug` | Ereignisprotokolle und Snapshots erzeugen | Fachlogik besitzen |
 | `experiment` | Konfigurationen, Wiederholungen und Kontrollen orchestrieren | Lernregeln innerhalb eines Versuchs heimlich verändern |

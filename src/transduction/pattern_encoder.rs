@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::environment::{Observation, Pattern};
-
-use super::{ChannelSpike, Encoder, EncodingError};
+use super::{ChannelSpike, Encoder, EncodingError, Observation, Pattern};
 
 /// Invalid pattern encoder setup.
 #[derive(Clone, Debug, PartialEq)]
@@ -12,7 +10,12 @@ pub enum PatternEncoderError {
     /// A pattern was assigned no channels.
     EmptyPattern(Pattern),
     /// A channel occurs more than once for the same pattern.
-    DuplicateChannel { pattern: Pattern, channel: u16 },
+    DuplicateChannel {
+        /// Pattern containing the duplicate assignment.
+        pattern: Pattern,
+        /// Channel assigned more than once.
+        channel: u16,
+    },
     /// A burst offset list was empty.
     EmptyBurst,
     /// Burst offsets must be ordered to make output deterministic.

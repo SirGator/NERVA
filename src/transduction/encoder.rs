@@ -2,7 +2,9 @@
 
 use std::{error::Error, fmt};
 
-use crate::{core::SimTime, environment::Observation};
+use crate::core::SimTime;
+
+use super::Observation;
 
 /// A spike on a root-local channel, before nerve routing.
 #[derive(Clone, Copy, Debug, PartialEq)]
