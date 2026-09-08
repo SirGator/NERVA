@@ -629,6 +629,7 @@ mod tests {
                         membrane_tau_us: 1_000.0,
                         refractory_period_us: 1,
                         activity_trace_tau_us: 10_000.0,
+                        intrinsic: Default::default(),
                     },
                     SimTime::ZERO,
                 )

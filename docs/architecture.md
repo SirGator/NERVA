@@ -1,6 +1,6 @@
 # Aktive Architektur und Konsolidierungsentscheidungen
 
-**Stand:** 19. August 2026
+**Stand:** 20. August 2026
 
 Dieses Dokument beschreibt die tatsächlich über `src/lib.rs` kompilierte
 Architektur. Die ausführliche M0-Logik und die experimentellen Kriterien stehen
@@ -84,6 +84,42 @@ Die neutralen Grenztypen `Pattern`, `Observation` und `Action` werden von
 bisherige öffentliche API; dadurch hängt die Schnittstellenebene nicht mehr von
 der darüberliegenden Umgebungsebene ab.
 
+## Kontinuierliche intrinsische Neuronendynamik
+
+`config::IntrinsicDynamicsConfig` beschreibt pro Zelle einen kontinuierlichen
+Fähigkeitsvektor statt diskreter Neuronentypen:
+
+```text
+g_i = (intrinsic_drive, burst_gain, adaptation_gain,
+       threshold_adaptation_gain, rebound_gain)
+```
+
+Alle Gains sind standardmäßig null, sodass bestehende LIF-Experimente denselben
+`f32`-Rechenpfad und dieselben Ereigniszeiten behalten. Bei aktiven Fähigkeiten
+hält `core::Neuron` die lokalen Zustände `B`, `A`, `R` und `T`; ein lesender
+`core::IntrinsicState` macht sie für Diagnostik sichtbar. Der momentane Drive
+wirkt als `D + B + R - A`, während `T` auf die Basisschwelle addiert wird.
+
+`core::intrinsic` enthält die analytische Faltung exponentiell zerfallender
+Ströme und die Intervallsuche mit analytischen Schranken für autonome
+Schwellenüberschreitungen.
+Der Core kennt dabei weiterhin keinen Scheduler. Die Runtime übernimmt nur den
+vom Neuron prognostizierten lokalen Zeitpunkt, storniert veraltete Prognosen und
+aggregiert inhibitorische Eingangsanteile separat, damit simultane Erregung den
+Rebound-Zustand nicht verdeckt.
+
+`DsvlmConfig::neuron` beschreibt wie bisher eine gemeinsame Zellklasse für die
+Standardexperimente. Heterogene Fähigkeitsvektoren können durch einzeln
+konstruierte `NeuronConfig`-Werte in einem manuell aufgebauten `Network` und
+`Simulation::new` verwendet werden.
+
+Sensorische und motorische Neuronen sind äußere Populationen desselben
+`core::Network`. Ihre Rollen sind nur Metadaten; ihre internen und zum Kern
+führenden Synapsen dürfen dieselben lokalen Lernregeln verwenden. Fest bleiben
+die physische Root-/Nerven-Zuordnung und die wertneutrale Transduktion. Die
+spätere lokale Bildung und das Pruning der Synapsen dieser äußeren Subnetze
+gehören in `development`.
+
 ## Bereinigte Altstruktur
 
 Die nicht aus `lib.rs` eingebundenen Verzeichnisse `area`, `common`, `event`,
@@ -93,7 +129,8 @@ oder durch den aktiven `core`, `runtime` und `learning` funktional ersetzt
 waren. Die historischen Dateien bleiben über Git-Commit `c4e80dd`
 wiederherstellbar.
 
-Künftige Fähigkeiten wie Modulation, Eligibility Traces, Adaptation,
-Strukturwachstum oder größere neuronale Systeme werden jeweils als getestete
-Erweiterung der aktiven Architektur implementiert und nicht durch Reaktivieren
+Künftige Fähigkeiten wie Modulation, Eligibility Traces, lernbare Änderungen
+des Fähigkeitsvektors, Strukturwachstum oder größere neuronale Systeme werden
+jeweils als getestete Erweiterung der aktiven Architektur implementiert und
+nicht durch Reaktivieren
 der Altmodule.

@@ -7,6 +7,8 @@
 pub mod event;
 /// Stable identity wrapper types.
 pub mod ids;
+/// Continuous intrinsic state and analytical local dynamics helpers.
+pub mod intrinsic;
 /// Sparse directed graph and synchronized adjacency indices.
 pub mod network;
 /// Leaky integrate-and-fire neuron state.
@@ -18,6 +20,7 @@ pub mod synapse;
 
 pub use event::{Event, EventKind, SimTime, SimTimeError};
 pub use ids::{NeuronId, SynapseId};
+pub use intrinsic::IntrinsicState;
 pub use network::{Network, NetworkError};
 pub use neuron::{HomeostaticState, Neuron, NeuronError, NeuronRole, Polarity};
 pub use spike::Spike;

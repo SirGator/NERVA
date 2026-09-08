@@ -1,6 +1,6 @@
 # DSVLM – Slice-Architektur und Logikbeschreibung
 
-**Stand:** 12. August 2026  
+**Stand:** 20. August 2026
 **Ziel:** Eine Rust-Bibliothek für ein ereignisbasiertes, räumliches Spiking-Netz mit lokalen Lernregeln.
 
 ## 1. Architekturentscheidung
@@ -33,12 +33,19 @@ flowchart LR
     E["Umgebung"] --> R["Roots"]
     R --> T["Transduction"]
     T --> N["Nerves"]
-    N --> C["Core-Netz"]
-    C --> N
+    N --> I["lernendes Eingangs-Subnetz"]
+    I <--> C["internes Core-Netz"]
+    C <--> O["lernendes Ausgangs-Subnetz"]
+    O --> N
     N --> T
     T --> R
     R --> E
 ```
+
+Eingangs-, internes und Ausgangs-Subnetz sind keine getrennten Engines. Sie
+sind Populationen desselben `core::Network` und verwenden dieselbe Spike-,
+Plastizitäts- und spätere Entwicklungslogik. Roots, Transduktion und Nerven
+bilden nur die stabilen Anschlüsse an konkrete Sensoren und Aktoren.
 
 Lernen liegt nicht als zusätzlicher Knoten im Nutzdatenpfad. Der Runtime-Slice meldet lokale Prä- und Post-Ereignisse an die Lernregel. Diese darf nur die jeweils betroffenen Synapsen oder Neuronen verändern.
 
@@ -189,6 +196,8 @@ Dieser Slice enthält unveränderliche, validierte Startparameter:
 - STDP-Fenster, Lernraten und Spurzeitkonstanten
 - Leitungsgeschwindigkeit und Distanzabschwächung
 - lokale Homöostaseparameter
+- kontinuierliche intrinsische Gains und ihre Zeitkonstanten für Drive, Burst,
+  Adaptation, Schwellenadaptation und Rebound
 
 Beim Start werden unmögliche Kombinationen abgewiesen, etwa negative Zeitkonstanten, `min_weight > max_weight` oder eine Leitungsgeschwindigkeit von null.
 
@@ -201,6 +210,22 @@ Die Membranspannung wird zwischen zwei Ereignissen analytisch fortgeschrieben:
 \[
 V(t)=V_{rest}+(V(t_0)-V_{rest})e^{-(t-t_0)/\tau_m}
 \]
+
+Mit aktiven intrinsischen Fähigkeiten wird dieselbe LIF-Gleichung um lokale,
+exponentiell zerfallende Ströme ergänzt:
+
+\[
+\dot V=-\frac{V-V_{rest}}{\tau_m}+D+B+R-A
+\]
+
+Die effektive Schwelle lautet dabei
+
+\[
+\theta_{eff}=\theta_{base}+T.
+\]
+
+Die Faltung jedes Stroms mit dem Membranzerfall wird geschlossen berechnet;
+Zwischenereignisse verändern das Ergebnis daher nicht.
 
 Die räumliche Dämpfung kann für M0 beispielsweise so berechnet werden:
 
@@ -226,8 +251,17 @@ Ein Neuron enthält mindestens:
 - Membranpotential und Zeitpunkt der letzten Aktualisierung
 - `refractory_until`
 - lokale Aktivitätsspuren
+- kontinuierliche lokale Zustände für Burst, Adaptation, Rebound und
+  Schwellenadaptation
 
 Die Rolle darf keine versteckte Speziallogik auslösen. Ein Motorneuron verwendet dieselbe Spike-Dynamik wie andere Neuronen; nur seine Verbindung zu einer Motorwurzel ist besonders.
+
+Ein Spike gibt `B`, `A` und `T` die jeweils konfigurierten Impulse. Ein
+inhibitorischer Eingangsimpuls erzeugt direkt nach dem atomaren Batch einen
+positiven Rebound-After-Current `R`. Alle vier Zustände zerfallen mit eigenen
+Zeitkonstanten. Null-Gains ergeben exakt das bisherige LIF-Neuron; Kombinationen
+der Gains bilden einen kontinuierlichen Verhaltensraum statt fester Klassen wie
+„BurstNeuron“ oder „AdaptiveNeuron“.
 
 #### `Synapse`
 
@@ -258,13 +292,22 @@ Alle Ereignisse mit exakt demselben Zeitstempel werden als Batch behandelt:
 
 Dadurch entscheidet nicht die zufällige Reihenfolge gleichzeitig eintreffender Spikes über das Ergebnis.
 
+Neben Netto- und Gesamtbetrag hält das Batch intern auch den Betrag aller
+inhibitorischen Beiträge. Dadurch bleibt Rebound bei gleichzeitig eintreffender
+Erregung sichtbar. Nach jedem betroffenen Batch prognostiziert ausschließlich
+das jeweilige Neuron seine nächste autonome Schwellenüberschreitung. Eine
+chronologische Intervallsuche verwirft nur Zeiträume, deren analytische Bounds
+eine Überschreitung ausschließen; es gibt weder einen festen Suchhorizont noch
+einen globalen Dynamiktick.
+
 Beim Feuern eines Neurons:
 
 1. wird ein `Spike` mit genauer Zeit erzeugt,
 2. das Potential auf den Resetwert gesetzt,
 3. `refractory_until` gesetzt,
-4. für jede aktive ausgehende Synapse ein `SynapticArrival` bei `time + delay` geplant,
-5. das Ereignis an Learning, Roots, Metrics und Debug weitergegeben.
+4. Burst-, Adaptations- und Schwellenadaptationszustand lokal aktualisiert,
+5. für jede aktive ausgehende Synapse ein `SynapticArrival` bei `time + delay` geplant,
+6. das Ereignis an Learning, Roots, Metrics und Debug weitergegeben.
 
 Die erste Implementierung läuft absichtlich auf einem Thread. Parallelisierung folgt erst, wenn deterministischer Replay auf einem Thread korrekt funktioniert.
 
@@ -354,6 +397,24 @@ Nerven sind feste Transport- und Zuordnungsstrukturen zwischen Roots und dem Cor
 - `Routing` wandelt einen Faserspike in ein Runtime-Ereignis um.
 
 Nerven entscheiden nicht, was ein Signal bedeutet. Interne plastische Synapsen gehören in den Core, nicht in `nerves`.
+
+#### Lernende Eingangs- und Ausgangsnetze
+
+Die feste Nervenabbildung endet an einer sensorischen beziehungsweise
+motorischen Neuronenpopulation. Diese Populationen sind äußere Subnetze des
+gleichen `core::Network`, keine fest codierten Adapter:
+
+```text
+Sensor → fester Anschluss → lernendes Eingangsnetz
+       → internes Netz → lernendes Ausgangsnetz → fester Anschluss → Aktor
+```
+
+`NeuronRole::Sensory` und `NeuronRole::Motor` bleiben reine Metadaten. Synapsen
+innerhalb und zwischen diesen Populationen können deshalb dieselben lokalen
+Lernregeln wie alle anderen Core-Synapsen verwenden. M0 startet noch mit einer
+fest erzeugten Topologie; das selbstständige Bilden und Abbauen solcher
+Verbindungen wird später durch lokale `development`-Mechanismen realisiert,
+nicht durch `roots`, `transduction` oder `nerves`.
 
 ### 6.9 `environment`
 

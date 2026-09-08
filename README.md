@@ -35,6 +35,17 @@ in [`docs/architecture.md`](docs/architecture.md).
 - `environment` and `experiment`: reproducible M0 orchestration
 - feature-gated `metrics`, `debug`, `visualization`, and post-M0 `development`
 
+Every neuron can additionally carry a continuous intrinsic capability vector:
+constant drive, burst, adaptation, threshold adaptation, and rebound. The
+neutral defaults preserve the original LIF behavior. Non-zero capabilities are
+integrated analytically between events and remain local neuron state; they do
+not create discrete neuron classes or a global simulation tick.
+
+Sensory and motor neuron populations live inside the same `core::Network`, so
+their synapses can use the same local learning rules as the internal network.
+Only the physical root/transduction/nerve attachment remains a fixed boundary;
+future structural formation and pruning belongs to `development`.
+
 The typed scalar primitives (`Potential`, `Threshold`, `Weight`,
 `SignalStrength`, and related domains) prepare a gradual migration. Active M0
 state still uses raw `f32` in several paths; each path will be converted end to

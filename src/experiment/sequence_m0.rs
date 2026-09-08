@@ -125,6 +125,7 @@ impl Default for M0ExperimentConfig {
             membrane_tau_us: 20_000.0,
             refractory_period_us: 1_000,
             activity_trace_tau_us: 250_000.0,
+            intrinsic: Default::default(),
         };
         dsvlm.learning.homeostasis.update_interval_us = 50_000;
         dsvlm.learning.homeostasis.target_rate_hz = 10.0;

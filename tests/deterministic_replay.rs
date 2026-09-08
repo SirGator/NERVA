@@ -30,6 +30,7 @@ fn neuron(id: u64) -> Neuron {
             membrane_tau_us: 500.0,
             refractory_period_us: 0,
             activity_trace_tau_us: 5_000.0,
+            intrinsic: Default::default(),
         },
         SimTime::ZERO,
     )

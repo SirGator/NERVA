@@ -29,8 +29,9 @@ pub enum EventKind {
         /// Neuron whose local state is maintained.
         neuron_id: NeuronId,
     },
-    /// Predicted local threshold crossing caused by a neuron's continuous
-    /// intrinsic current. This is scheduled only for that one neuron.
+    /// Predicted local threshold crossing caused by continuous intrinsic
+    /// drive, burst, adaptation, rebound, or threshold recovery. This is
+    /// scheduled only for that one neuron.
     IntrinsicSpike {
         /// Neuron whose intrinsic state predicted the crossing.
         neuron_id: NeuronId,

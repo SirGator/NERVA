@@ -853,12 +853,18 @@ impl<R: PlasticityRule> Simulation<R> {
                 .unwrap_or(InputSummary {
                     summed_input: 0.0,
                     input_magnitude: 0.0,
+                    inhibitory_input_magnitude: 0.0,
                 });
             if let Some(spike) = self
                 .network
                 .neuron_mut(target)
                 .ok_or(SimulationError::UnknownNeuron(target))?
-                .integrate_input_with_magnitude(time, input.summed_input, input.input_magnitude)?
+                .integrate_input_with_components(
+                    time,
+                    input.summed_input,
+                    input.input_magnitude,
+                    input.inhibitory_input_magnitude,
+                )?
             {
                 spikes.push(spike);
             }
@@ -1057,6 +1063,7 @@ fn collect_input(inputs: &mut BTreeMap<NeuronId, Vec<f32>>, target: NeuronId, am
 struct InputSummary {
     summed_input: f32,
     input_magnitude: f32,
+    inhibitory_input_magnitude: f32,
 }
 
 fn canonical_input_summary(
@@ -1076,6 +1083,14 @@ fn canonical_input_summary(
         return Err(SimulationError::NonFiniteInputMagnitude { target });
     }
     let input_magnitude = input_magnitude.min(f64::from(f32::MAX)) as f32;
+    let inhibitory_input_magnitude = amplitudes
+        .iter()
+        .filter(|amplitude| **amplitude < 0.0)
+        .fold(0.0_f64, |sum, amplitude| sum + f64::from(-*amplitude));
+    if !inhibitory_input_magnitude.is_finite() {
+        return Err(SimulationError::NonFiniteInputMagnitude { target });
+    }
+    let inhibitory_input_magnitude = inhibitory_input_magnitude.min(f64::from(f32::MAX)) as f32;
     let sum = amplitudes
         .into_iter()
         .fold(0.0_f64, |sum, amplitude| sum + f64::from(amplitude));
@@ -1084,6 +1099,7 @@ fn canonical_input_summary(
         Ok(InputSummary {
             summed_input: sum,
             input_magnitude,
+            inhibitory_input_magnitude,
         })
     } else {
         Err(SimulationError::NonFiniteSummedInput { target })
@@ -1109,6 +1125,7 @@ mod tests {
             membrane_tau_us: 1_000.0,
             refractory_period_us: 1,
             activity_trace_tau_us: 10_000.0,
+            intrinsic: Default::default(),
         }
     }
 
@@ -1717,6 +1734,7 @@ mod tests {
             // A one-second trace makes the 10 Hz long-run target observable
             // despite the two deliberately different input temporal patterns.
             activity_trace_tau_us: 1_000_000.0,
+            intrinsic: Default::default(),
         };
         let mut network = Network::new();
         for id in 1..=3 {

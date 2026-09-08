@@ -1,7 +1,7 @@
 //! Neutral copied state suitable for replay diagnostics and visualization.
 
 use crate::{
-    core::{Network, NeuronId, SimTime, SynapseId},
+    core::{IntrinsicState, Network, NeuronId, SimTime, SynapseId},
     math::Position3D,
 };
 
@@ -22,6 +22,8 @@ pub struct NeuronSnapshot {
     pub input_avg: f32,
     /// Constant local intrinsic current in potential units per second.
     pub intrinsic_current: f32,
+    /// Continuous local burst, adaptation, rebound, and threshold state.
+    pub intrinsic: IntrinsicState,
     /// Local request signal for future structural plasticity.
     pub structural_drive: f32,
     /// Total emitted spikes.
@@ -67,6 +69,7 @@ impl NetworkSnapshot {
                 firing_avg: neuron.estimated_firing_rate_hz(),
                 input_avg: neuron.estimated_input_rate(),
                 intrinsic_current: neuron.intrinsic_current(),
+                intrinsic: neuron.intrinsic_state(),
                 structural_drive: neuron.structural_drive(),
                 spike_count: neuron.spike_count(),
             })
@@ -104,7 +107,7 @@ impl NetworkSnapshot {
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::NeuronConfig,
+        config::{IntrinsicDynamicsConfig, NeuronConfig},
         core::{Neuron, NeuronRole, Polarity, Synapse},
     };
 
@@ -167,6 +170,7 @@ mod tests {
                     firing_avg: 0.0,
                     input_avg: 0.0,
                     intrinsic_current: 0.0,
+                    intrinsic: IntrinsicState::default(),
                     structural_drive: 0.0,
                     spike_count: 0,
                 },
@@ -178,6 +182,7 @@ mod tests {
                     firing_avg: 0.0,
                     input_avg: 0.0,
                     intrinsic_current: 0.0,
+                    intrinsic: IntrinsicState::default(),
                     structural_drive: 0.0,
                     spike_count: 0,
                 },
@@ -187,5 +192,37 @@ mod tests {
 
         assert_eq!(snapshot.neurons[0].id, NeuronId(1));
         assert_eq!(snapshot.neurons[1].id, NeuronId(2));
+    }
+
+    #[test]
+    fn capture_includes_continuous_intrinsic_state() {
+        let mut network = Network::new();
+        let mut neuron = Neuron::new(
+            NeuronId(1),
+            Position3D::ORIGIN,
+            Polarity::Excitatory,
+            None,
+            NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    burst_gain: 5.0,
+                    threshold_adaptation_gain: 0.25,
+                    ..IntrinsicDynamicsConfig::default()
+                },
+                ..NeuronConfig::default()
+            },
+            SimTime::ZERO,
+        )
+        .unwrap();
+        neuron.integrate_input(SimTime::ZERO, 1.0).unwrap();
+        network.add_neuron(neuron).unwrap();
+
+        let snapshot = NetworkSnapshot::capture(SimTime::ZERO, &network);
+
+        assert_eq!(snapshot.neurons[0].intrinsic.burst_drive, 5.0);
+        assert_eq!(snapshot.neurons[0].intrinsic.threshold_adaptation, 0.25);
+        assert_eq!(snapshot.neurons[0].threshold, 1.25);
     }
 }

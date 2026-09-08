@@ -15,7 +15,7 @@ pub mod runtime;
 
 pub use learning::{HomeostasisConfig, LearningConfig};
 pub use network::NetworkConfig;
-pub use runtime::{NeuronConfig, RuntimeConfig};
+pub use runtime::{IntrinsicDynamicsConfig, NeuronConfig, RuntimeConfig};
 
 /// A complete validated configuration for one deterministic experiment.
 #[derive(Clone, Debug, Default, PartialEq)]
