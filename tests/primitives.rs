@@ -1,4 +1,4 @@
-use dsvlm_rust::primitives::{
+use nerva::primitives::{
     Activity, ActuatorId, Concentration, Distance, EnergyCost, ModulatorId, NeuronId, Position3,
     Position3D, Potential, RegionId, SensorId, SignalStrength, SimTime, SynapseId, SystemId,
     Threshold, Weight,
@@ -39,17 +39,17 @@ fn every_supported_primitive_is_publicly_available() {
 fn compatibility_paths_use_the_canonical_primitive_types() {
     let primitive_neuron_id = NeuronId(42);
     let primitive_synapse_id = SynapseId(84);
-    let core_neuron_id: dsvlm_rust::core::NeuronId = primitive_neuron_id;
-    let core_synapse_id: dsvlm_rust::core::SynapseId = primitive_synapse_id;
+    let core_neuron_id: nerva::core::NeuronId = primitive_neuron_id;
+    let core_synapse_id: nerva::core::SynapseId = primitive_synapse_id;
     let primitive_time = SimTime(125);
-    let core_time: dsvlm_rust::core::SimTime = primitive_time;
+    let core_time: nerva::core::SimTime = primitive_time;
     let primitive_position = Position3::new(1.0, 2.0, 3.0);
     let primitive_position_3d = Position3D {
         x: 1.0,
         y: 2.0,
         z: 3.0,
     };
-    let math_position: dsvlm_rust::math::Position3D = primitive_position;
+    let math_position: nerva::math::Position3D = primitive_position;
 
     assert_eq!(core_neuron_id, primitive_neuron_id);
     assert_eq!(core_synapse_id, primitive_synapse_id);

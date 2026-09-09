@@ -1,4 +1,6 @@
-//! DSVLM-M0: a deterministic, event-driven spatial spiking-network library.
+//! NERVA — Neural Emergent Reactive & Versatile Architectur.
+//!
+//! NERVA-M0 is a deterministic, event-driven spatial spiking-network library.
 //!
 //! The core only represents local neuronal and synaptic state. Simulation,
 //! plasticity, external connections, experiments and diagnostics live in

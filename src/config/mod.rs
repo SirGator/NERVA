@@ -1,7 +1,7 @@
-//! Validated, immutable configuration for DSVLM simulations.
+//! Validated, immutable configuration for NERVA simulations.
 //!
 //! Configuration types deliberately contain no runtime or learning state. Call
-//! [`crate::config::DsvlmConfig::validate`] once before constructing a network and retain the
+//! [`crate::config::NervaConfig::validate`] once before constructing a network and retain the
 //! value as the reproducible description of the experiment.
 
 use std::{error::Error, fmt};
@@ -19,7 +19,7 @@ pub use runtime::{IntrinsicDynamicsConfig, NeuronConfig, RuntimeConfig};
 
 /// A complete validated configuration for one deterministic experiment.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct DsvlmConfig {
+pub struct NervaConfig {
     /// Static topology-generation and propagation parameters.
     pub network: NetworkConfig,
     /// Parameters shared by the LIF neurons created for the experiment.
@@ -30,7 +30,7 @@ pub struct DsvlmConfig {
     pub learning: LearningConfig,
 }
 
-impl DsvlmConfig {
+impl NervaConfig {
     /// Validates every slice and the bounds shared by network construction and
     /// learning.
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -227,12 +227,12 @@ mod tests {
 
     #[test]
     fn default_configuration_is_valid() {
-        assert_eq!(DsvlmConfig::default().validate(), Ok(()));
+        assert_eq!(NervaConfig::default().validate(), Ok(()));
     }
 
     #[test]
     fn aggregate_rejects_learning_bounds_outside_hard_network_bounds() {
-        let mut config = DsvlmConfig::default();
+        let mut config = NervaConfig::default();
         config.learning.max_weight = config.network.max_weight + 1.0;
 
         assert!(matches!(

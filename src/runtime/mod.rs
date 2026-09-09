@@ -1,4 +1,4 @@
-//! Deterministic, single-threaded event execution for the DSVLM core.
+//! Deterministic, single-threaded event execution for the NERVA core.
 
 /// Complete equal-timestamp event batches.
 pub mod event_batch;

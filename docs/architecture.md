@@ -4,7 +4,7 @@
 
 Dieses Dokument beschreibt die tatsächlich über `src/lib.rs` kompilierte
 Architektur. Die ausführliche M0-Logik und die experimentellen Kriterien stehen
-weiterhin in `DSVLM_SLICE_ARCHITECTURE.md`.
+weiterhin in `NERVA_SLICE_ARCHITECTURE.md`.
 
 ## Aktiver Datenpfad
 
@@ -108,7 +108,7 @@ vom Neuron prognostizierten lokalen Zeitpunkt, storniert veraltete Prognosen und
 aggregiert inhibitorische Eingangsanteile separat, damit simultane Erregung den
 Rebound-Zustand nicht verdeckt.
 
-`DsvlmConfig::neuron` beschreibt wie bisher eine gemeinsame Zellklasse für die
+`NervaConfig::neuron` beschreibt wie bisher eine gemeinsame Zellklasse für die
 Standardexperimente. Heterogene Fähigkeitsvektoren können durch einzeln
 konstruierte `NeuronConfig`-Werte in einem manuell aufgebauten `Network` und
 `Simulation::new` verwendet werden.

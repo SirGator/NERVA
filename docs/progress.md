@@ -1,8 +1,10 @@
-# DSVLM – Gedankliche Entwicklung des Projekts
+# NERVA – Gedankliche Entwicklung des Projekts
+
+**NERVA — Neural Emergent Reactive & Versatile Architectur**
 
 ## Zweck dieses Dokuments
 
-Dieses Dokument hält nicht nur den aktuellen technischen Stand von DSVLM fest, sondern den Weg dorthin:
+Dieses Dokument hält nicht nur den aktuellen technischen Stand von NERVA fest, sondern den Weg dorthin:
 
 ```text
 Grobe Idee

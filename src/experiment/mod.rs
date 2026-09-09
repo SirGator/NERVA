@@ -1,4 +1,4 @@
-//! Reproducible construction and execution of DSVLM experiments.
+//! Reproducible construction and execution of NERVA experiments.
 
 mod bit_world;
 mod comparison;

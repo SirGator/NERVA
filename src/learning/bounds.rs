@@ -56,7 +56,7 @@ impl WeightBounds {
 
     /// Applies a finite delta and clamps the result without allowing a sign flip.
     ///
-    /// DSVLM-M0 represents excitation or inhibition through the presynaptic
+    /// NERVA-M0 represents excitation or inhibition through the presynaptic
     /// neuron's polarity. A synaptic weight is therefore always a non-negative
     /// magnitude.
     pub fn apply_delta(self, weight: f32, delta: f32) -> f32 {

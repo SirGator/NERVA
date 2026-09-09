@@ -4,7 +4,7 @@ use std::{
     process::{self, Command},
 };
 
-use dsvlm_rust::{
+use nerva::{
     core::{Event, EventKind, NeuronId, SimTime},
     runtime::EventScheduler,
 };
@@ -33,12 +33,12 @@ fn retired_parallel_modules_do_not_return() {
 fn primitives_compile_without_any_higher_architectural_layer() {
     let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let metadata_path =
-        std::env::temp_dir().join(format!("dsvlm-primitives-boundary-{}.rmeta", process::id()));
+        std::env::temp_dir().join(format!("nerva-primitives-boundary-{}.rmeta", process::id()));
     let output = Command::new("rustc")
         .current_dir(manifest_root)
         .args([
             "--crate-name",
-            "dsvlm_primitives_boundary",
+            "nerva_primitives_boundary",
             "--crate-type",
             "lib",
             "--edition=2024",
@@ -84,16 +84,15 @@ fn transduction_does_not_depend_on_the_environment_layer() {
 
 #[test]
 fn environment_paths_reexport_transduction_boundary_types() {
-    let pattern: dsvlm_rust::transduction::Pattern = dsvlm_rust::environment::Pattern::A;
-    let observation: dsvlm_rust::transduction::Observation =
-        dsvlm_rust::environment::Observation::Pattern {
-            at: SimTime::ZERO,
-            pattern,
-        };
-    let action: dsvlm_rust::transduction::Action = dsvlm_rust::environment::Action::NoOp;
+    let pattern: nerva::transduction::Pattern = nerva::environment::Pattern::A;
+    let observation: nerva::transduction::Observation = nerva::environment::Observation::Pattern {
+        at: SimTime::ZERO,
+        pattern,
+    };
+    let action: nerva::transduction::Action = nerva::environment::Action::NoOp;
 
     assert_eq!(observation.time(), SimTime::ZERO);
-    assert_eq!(action, dsvlm_rust::transduction::Action::NoOp);
+    assert_eq!(action, nerva::transduction::Action::NoOp);
 }
 
 #[test]

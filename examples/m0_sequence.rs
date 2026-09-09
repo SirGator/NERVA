@@ -1,13 +1,13 @@
-//! Runs the paired, multi-seed DSVLM-M0 sequence-learning study.
+//! Runs the paired, multi-seed NERVA-M0 sequence-learning study.
 
-use dsvlm_rust::experiment::{M0ExperimentConfig, M0StudyConfig, run_m0_study};
+use nerva::experiment::{M0ExperimentConfig, M0StudyConfig, run_m0_study};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = M0ExperimentConfig::default();
     let study_config = M0StudyConfig::default();
     let study = run_m0_study(&config, &study_config)?;
 
-    println!("DSVLM-M0 paired seeds: {:?}", study_config.seeds);
+    println!("NERVA-M0 paired seeds: {:?}", study_config.seeds);
     println!("seed  group  score  hits  false  stable  frozen replay");
     for comparison in &study.comparisons {
         for result in &comparison.groups {

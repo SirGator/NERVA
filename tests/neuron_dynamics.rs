@@ -1,4 +1,4 @@
-use dsvlm_rust::{
+use nerva::{
     config::{IntrinsicDynamicsConfig, NeuronConfig, RuntimeConfig},
     core::{Network, Neuron, NeuronId, Polarity, SimTime},
     learning::NoPlasticity,

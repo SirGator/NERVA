@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "dsvlm_rust"
+name = "nerva"
 version = "0.1.0"

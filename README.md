@@ -1,6 +1,8 @@
-# DSVLM-M0
+# NERVA-M0
 
-DSVLM-M0 is a Rust library for a deterministic, event-driven spatial spiking
+**NERVA — Neural Emergent Reactive & Versatile Architectur**
+
+NERVA-M0 is a Rust library for a deterministic, event-driven spatial spiking
 network with local Pair-STDP. It deliberately has no global simulation tick,
 backpropagation, global loss, reward signal, morphogen fields, or hidden
 task-specific neuron behavior.
@@ -21,7 +23,7 @@ cargo run --example m0_sequence
 
 The complete architectural rules, slice responsibilities, experiment design,
 and success criteria are documented in
-[`DSVLM_SLICE_ARCHITECTURE.md`](DSVLM_SLICE_ARCHITECTURE.md).
+[`NERVA_SLICE_ARCHITECTURE.md`](NERVA_SLICE_ARCHITECTURE.md).
 The currently compiled dependency layers and consolidation decisions are kept
 in [`docs/architecture.md`](docs/architecture.md).
 

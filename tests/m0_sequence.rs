@@ -1,4 +1,4 @@
-use dsvlm_rust::experiment::{
+use nerva::experiment::{
     M0Experiment, M0ExperimentConfig, M0Group, M0StudyConfig, run_m0_comparison, run_m0_study,
 };
 
@@ -34,7 +34,7 @@ fn ordered_learning_beats_fixed_and_randomized_controls_without_runaway_activity
         comparison
             .groups
             .iter()
-            .all(|result| result.seed == config.dsvlm.network.seed
+            .all(|result| result.seed == config.nerva.network.seed
                 && result.metrics.frozen_probe_replay_identical
                 && result.metrics.frozen_weights_unchanged)
     );

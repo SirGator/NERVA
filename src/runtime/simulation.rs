@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    config::{ConfigError, DsvlmConfig, HomeostasisConfig, RuntimeConfig},
+    config::{ConfigError, HomeostasisConfig, NervaConfig, RuntimeConfig},
     core::{
         Event, EventKind, Network, NetworkError, NeuronError, NeuronId, SimTime, Spike, Synapse,
         SynapseId,
@@ -354,7 +354,7 @@ impl<R: PlasticityRule> Simulation<R> {
     pub fn from_config(
         network: Network,
         plasticity_rule: R,
-        config: &DsvlmConfig,
+        config: &NervaConfig,
     ) -> Result<Self, SimulationError> {
         config.validate().map_err(SimulationError::InvalidConfig)?;
         let mut simulation = Self::new(
@@ -1109,7 +1109,7 @@ fn canonical_input_summary(
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::{DsvlmConfig, HomeostasisConfig, NeuronConfig},
+        config::{HomeostasisConfig, NervaConfig, NeuronConfig},
         core::{Neuron, Polarity, Synapse},
         learning::{NoPlasticity, PlasticityRule},
         math::Position3D,
@@ -1213,7 +1213,7 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            Simulation::from_config(network, NoPlasticity, &DsvlmConfig::default()),
+            Simulation::from_config(network, NoPlasticity, &NervaConfig::default()),
             Err(SimulationError::InvalidNetwork(
                 NetworkError::InconsistentIndices
             ))
@@ -1223,7 +1223,7 @@ mod tests {
     #[test]
     fn aggregate_constructor_rejects_network_config_mismatch() {
         let network = connected_network(Polarity::Excitatory);
-        let error = Simulation::from_config(network, NoPlasticity, &DsvlmConfig::default())
+        let error = Simulation::from_config(network, NoPlasticity, &NervaConfig::default())
             .err()
             .expect("default config describes another population");
 
@@ -1503,7 +1503,7 @@ mod tests {
 
     #[test]
     fn aggregate_configuration_starts_local_clocks_automatically() {
-        let mut config = DsvlmConfig::default();
+        let mut config = NervaConfig::default();
         config.network.excitatory_neurons = 1;
         config.network.inhibitory_neurons = 0;
         config.neuron = neuron_params();

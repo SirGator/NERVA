@@ -1,6 +1,6 @@
-//! Small executable entry point for experimenting with the DSVLM library.
+//! Small executable entry point for experimenting with the NERVA library.
 
 /// Runs the minimal executable example.
 fn main() {
-    println!("DSVLM minimal network example");
+    println!("NERVA minimal network example");
 }

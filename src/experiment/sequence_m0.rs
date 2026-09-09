@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    config::{DsvlmConfig, NeuronConfig},
+    config::{NervaConfig, NeuronConfig},
     core::{Network, Neuron, NeuronId, NeuronRole, Polarity, SimTime, Synapse, SynapseId},
     environment::{Environment, Observation, Pattern, SequenceEnvironment},
     learning::{NoPlasticity, PairStdp, PlasticityRule},
@@ -73,7 +73,7 @@ impl M0InputPipeline {
 #[derive(Clone, Debug, PartialEq)]
 pub struct M0ExperimentConfig {
     /// Shared validated simulation configuration and seed.
-    pub dsvlm: DsvlmConfig,
+    pub nerva: NervaConfig,
     /// Number of A→B→C→D repetitions during training.
     pub training_repetitions: usize,
     /// Time between consecutive training symbols.
@@ -104,21 +104,21 @@ pub struct M0ExperimentConfig {
 
 impl Default for M0ExperimentConfig {
     fn default() -> Self {
-        let mut dsvlm = DsvlmConfig::default();
-        dsvlm.network.excitatory_neurons = 8;
-        dsvlm.network.inhibitory_neurons = 1;
-        dsvlm.network.connection_probability = 1.0;
-        dsvlm.network.seed = 7;
-        dsvlm.network.distance_decay_length = 1_000_000.0;
-        dsvlm.network.conduction_velocity = 0.0001;
-        dsvlm.network.max_weight = 2.0;
-        dsvlm.learning.max_weight = 2.0;
-        dsvlm.learning.a_plus = 0.04;
-        dsvlm.learning.a_minus = 0.045;
-        dsvlm.learning.tau_plus_us = 20_000.0;
-        dsvlm.learning.tau_minus_us = 20_000.0;
-        dsvlm.learning.stdp_window_us = 2_000;
-        dsvlm.neuron = NeuronConfig {
+        let mut nerva = NervaConfig::default();
+        nerva.network.excitatory_neurons = 8;
+        nerva.network.inhibitory_neurons = 1;
+        nerva.network.connection_probability = 1.0;
+        nerva.network.seed = 7;
+        nerva.network.distance_decay_length = 1_000_000.0;
+        nerva.network.conduction_velocity = 0.0001;
+        nerva.network.max_weight = 2.0;
+        nerva.learning.max_weight = 2.0;
+        nerva.learning.a_plus = 0.04;
+        nerva.learning.a_minus = 0.045;
+        nerva.learning.tau_plus_us = 20_000.0;
+        nerva.learning.tau_minus_us = 20_000.0;
+        nerva.learning.stdp_window_us = 2_000;
+        nerva.neuron = NeuronConfig {
             resting_potential: 0.0,
             reset_potential: 0.0,
             threshold: 1.0,
@@ -127,14 +127,14 @@ impl Default for M0ExperimentConfig {
             activity_trace_tau_us: 250_000.0,
             intrinsic: Default::default(),
         };
-        dsvlm.learning.homeostasis.update_interval_us = 50_000;
-        dsvlm.learning.homeostasis.target_rate_hz = 10.0;
-        dsvlm.learning.homeostasis.target_input_rate = 1.0;
-        dsvlm.learning.homeostasis.intrinsic_adjustment_rate = 0.001;
-        dsvlm.learning.homeostasis.structural_adjustment_rate = 0.01;
+        nerva.learning.homeostasis.update_interval_us = 50_000;
+        nerva.learning.homeostasis.target_rate_hz = 10.0;
+        nerva.learning.homeostasis.target_input_rate = 1.0;
+        nerva.learning.homeostasis.intrinsic_adjustment_rate = 0.001;
+        nerva.learning.homeostasis.structural_adjustment_rate = 0.01;
 
         Self {
-            dsvlm,
+            nerva,
             training_repetitions: 24,
             symbol_interval_us: 10_000,
             pause_us: 30_000,
@@ -155,7 +155,7 @@ impl Default for M0ExperimentConfig {
 impl M0ExperimentConfig {
     /// Validates experiment timing, amplitudes and the complete simulation config.
     pub fn validate(&self) -> Result<(), ExperimentError> {
-        self.dsvlm
+        self.nerva
             .validate()
             .map_err(|error| ExperimentError::new("configuration", error.to_string()))?;
         if self.training_repetitions == 0 {
@@ -215,7 +215,7 @@ impl M0ExperimentConfig {
         }
         let geometric_delay = conduction_delay_us(
             PATTERN_POSITIONS[0].distance_to(PATTERN_POSITIONS[1]),
-            self.dsvlm.network.conduction_velocity,
+            self.nerva.network.conduction_velocity,
             1,
         )
         .map_err(|error| ExperimentError::new("configuration", error.to_string()))?;
@@ -259,8 +259,8 @@ impl M0ExperimentConfig {
             ),
         ] {
             if !weight.is_finite()
-                || weight < self.dsvlm.network.min_weight
-                || weight > self.dsvlm.network.max_weight
+                || weight < self.nerva.network.min_weight
+                || weight > self.nerva.network.max_weight
             {
                 return Err(ExperimentError::new(
                     "configuration",
@@ -276,22 +276,22 @@ impl M0ExperimentConfig {
         }
         let recurrent_min = self.recurrent_weight - self.recurrent_weight_jitter;
         let recurrent_max = self.recurrent_weight + self.recurrent_weight_jitter;
-        if recurrent_min < self.dsvlm.learning.min_weight
-            || recurrent_max > self.dsvlm.learning.max_weight
+        if recurrent_min < self.nerva.learning.min_weight
+            || recurrent_max > self.nerva.learning.max_weight
         {
             return Err(ExperimentError::new(
                 "configuration",
                 "the recurrent weight interval must lie inside the learning weight bounds",
             ));
         }
-        if self.dsvlm.network.excitatory_neurons != 8 || self.dsvlm.network.inhibitory_neurons != 1
+        if self.nerva.network.excitatory_neurons != 8 || self.nerva.network.inhibitory_neurons != 1
         {
             return Err(ExperimentError::new(
                 "configuration",
                 "the canonical M0 topology requires 8 excitatory and 1 inhibitory neuron",
             ));
         }
-        if self.dsvlm.network.connection_probability != 1.0 {
+        if self.nerva.network.connection_probability != 1.0 {
             return Err(ExperimentError::new(
                 "configuration",
                 "the canonical M0 assay gives every directed pattern transition an equal candidate synapse; connection_probability must be one",
@@ -316,7 +316,7 @@ impl M0Experiment {
 
     /// Runs training, freezes weights, presents A, and calculates measurements.
     pub fn run(&self) -> Result<M0GroupResult, ExperimentError> {
-        let mut group_config = self.config.dsvlm.clone();
+        let mut group_config = self.config.nerva.clone();
         group_config.learning.enabled = self.group != M0Group::OrderedFixed;
         group_config.learning.homeostasis.enabled = self.group == M0Group::OrderedHomeostasis;
 
@@ -415,8 +415,8 @@ impl M0Experiment {
             .collect();
         let weight_metrics = WeightMetrics::from_weights(
             plastic_weights.iter().copied(),
-            self.config.dsvlm.learning.min_weight,
-            self.config.dsvlm.learning.max_weight,
+            self.config.nerva.learning.min_weight,
+            self.config.nerva.learning.max_weight,
         );
         let all_neurons: Vec<_> = first_probe.final_network.neuron_ids().collect();
         let training_neuron_rates_hz = all_neurons
@@ -460,10 +460,10 @@ impl M0Experiment {
         let stable_after_learning = training_stable && first_probe.stable && second_probe.stable;
 
         let mut effective_config = self.config.clone();
-        effective_config.dsvlm = group_config;
+        effective_config.nerva = group_config;
         Ok(M0GroupResult {
             group: self.group,
-            seed: self.config.dsvlm.network.seed,
+            seed: self.config.nerva.network.seed,
             effective_config,
             training_patterns,
             initial_weights,
@@ -511,7 +511,7 @@ impl M0Experiment {
         if self.group == M0Group::RandomLearning {
             // A separate stream guarantees that randomizing inputs can never alter
             // the identically seeded initial topology.
-            let seed = self.config.dsvlm.network.seed ^ INPUT_STREAM;
+            let seed = self.config.nerva.network.seed ^ INPUT_STREAM;
             DeterministicRng::new(seed).shuffle(&mut patterns);
         }
         patterns
@@ -564,7 +564,7 @@ pub fn run_m0_study(
     let mut full_runs_replay_identically = true;
     for &seed in &study_config.seeds {
         let mut config = base_config.clone();
-        config.dsvlm.network.seed = seed;
+        config.nerva.network.seed = seed;
         let comparison = run_m0_comparison(&config)?;
         let replay = run_m0_comparison(&config)?;
         full_runs_replay_identically &= comparison == replay;
@@ -689,7 +689,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
     // seeds, stratified permutations supply genuine independent initial states.
     // One target-blind pool gives all twelve candidates the same marginal.
     // Seed pairing—not knowledge of the trained sequence—controls variation.
-    let mut topology_rng = DeterministicRng::new(config.dsvlm.network.seed ^ TOPOLOGY_STREAM);
+    let mut topology_rng = DeterministicRng::new(config.nerva.network.seed ^ TOPOLOGY_STREAM);
     let jitter = config.recurrent_weight_jitter;
     let mut recurrent_offsets = vec![
         -jitter, 0.0, jitter, -jitter, 0.0, jitter, -jitter, 0.0, jitter, -jitter, 0.0, jitter,
@@ -711,7 +711,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                     position,
                     Polarity::Excitatory,
                     Some(NeuronRole::Sensory),
-                    config.dsvlm.neuron,
+                    config.nerva.neuron,
                     SimTime::ZERO,
                 )
                 .map_err(|error| ExperimentError::new("network", error.to_string()))?,
@@ -724,7 +724,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                     position,
                     Polarity::Excitatory,
                     Some(NeuronRole::Processing),
-                    config.dsvlm.neuron,
+                    config.nerva.neuron,
                     SimTime::ZERO,
                 )
                 .map_err(|error| ExperimentError::new("network", error.to_string()))?,
@@ -741,7 +741,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                 Position3D::new(0.5, 0.288_675_13, 0.204_124_15),
                 Polarity::Inhibitory,
                 Some(NeuronRole::Processing),
-                config.dsvlm.neuron,
+                config.nerva.neuron,
                 SimTime::ZERO,
             )
             .map_err(|error| ExperimentError::new("network", error.to_string()))?,
@@ -783,7 +783,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                 .position();
             let delay_us = conduction_delay_us(
                 pre_position.distance_to(post_position),
-                config.dsvlm.network.conduction_velocity,
+                config.nerva.network.conduction_velocity,
                 1,
             )
             .map_err(|error| ExperimentError::new("network delay", error.to_string()))?;
@@ -906,8 +906,8 @@ fn run_frozen_probe(
     let mut simulation = Simulation::new(
         network,
         NoPlasticity,
-        config.dsvlm.runtime,
-        config.dsvlm.network.distance_decay_length,
+        config.nerva.runtime,
+        config.nerva.network.distance_decay_length,
     )
     .map_err(runtime_error)?;
     input.schedule(&mut simulation, probe_start, Pattern::A)?;
@@ -1146,7 +1146,7 @@ mod tests {
         assert!(distances.iter().all(|&distance| distance == 1.0));
 
         let mut other_seed = config.clone();
-        other_seed.dsvlm.network.seed += 1;
+        other_seed.nerva.network.seed += 1;
         let (other_network, _, _) = build_network(&other_seed).unwrap();
         let weights: Vec<_> = candidates.iter().map(|synapse| synapse.weight()).collect();
         let other_weights: Vec<_> = other_network

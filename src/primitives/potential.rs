@@ -6,7 +6,7 @@
 /// potential is required:
 ///
 /// ```compile_fail
-/// use dsvlm_rust::primitives::{Potential, Threshold};
+/// use nerva::primitives::{Potential, Threshold};
 ///
 /// fn accepts_potential(_: Potential) {}
 ///

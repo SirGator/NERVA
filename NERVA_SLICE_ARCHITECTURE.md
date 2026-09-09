@@ -1,13 +1,15 @@
-# DSVLM – Slice-Architektur und Logikbeschreibung
+# NERVA – Slice-Architektur und Logikbeschreibung
+
+**NERVA — Neural Emergent Reactive & Versatile Architectur**
 
 **Stand:** 20. August 2026
 **Ziel:** Eine Rust-Bibliothek für ein ereignisbasiertes, räumliches Spiking-Netz mit lokalen Lernregeln.
 
 ## 1. Architekturentscheidung
 
-DSVLM wird zunächst als **ein Rust-Crate** gebaut. Die Slices sind Module innerhalb der Bibliothek und noch keine getrennten Crates oder Services.
+NERVA wird zunächst als **ein Rust-Crate** gebaut. Die Slices sind Module innerhalb der Bibliothek und noch keine getrennten Crates oder Services.
 
-Die erste Version, **DSVLM-M0**, beantwortet nur eine Frage:
+Die erste Version, **NERVA-M0**, beantwortet nur eine Frage:
 
 > Kann ein kleines rekurrentes Spiking-Netz mit lokalem Pair-STDP eine wiederkehrende zeitliche Sequenz stabil lernen?
 
@@ -52,7 +54,7 @@ Lernen liegt nicht als zusätzlicher Knoten im Nutzdatenpfad. Der Runtime-Slice 
 ## 4. Ordnerstruktur
 
 ```text
-dsvlm/
+nerva/
 ├── Cargo.toml
 ├── src/
 │   ├── lib.rs
@@ -430,7 +432,7 @@ pub trait Environment {
 Für M0 ist die Umgebung nur ein deterministischer Sequenzgenerator. Danach folgt eine kleine geschlossene `BitWorld`, bevor eine CLI-VM angebunden wird:
 
 ```text
-VM-Terminalbytes → Transduktion → DSVLM → Motorbytes → VM
+VM-Terminalbytes → Transduktion → NERVA → Motorbytes → VM
 ```
 
 Die VM ist ein Adapter und niemals Teil des neuronalen Lernkerns.
