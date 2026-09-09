@@ -6,6 +6,19 @@ Dieses Dokument beschreibt die tatsächlich über `src/lib.rs` kompilierte
 Architektur. Die ausführliche M0-Logik und die experimentellen Kriterien stehen
 weiterhin in `NERVA_SLICE_ARCHITECTURE.md`.
 
+## Bibliothek als Projektziel
+
+NERVA wird als wiederverwendbare Rust-Bibliothek entwickelt. Eine einbindende
+Anwendung erstellt das Netzwerk, wählt die lokalen Lernregeln, liefert
+zeitgestempelte Eingänge und steuert die Ausführung über `Simulation`.
+Beobachtungsdaten und Netzwerkzustand stehen ihr zur Auswertung zur Verfügung.
+
+Die öffentliche API bildet diese Aufgaben unabhängig von einem bestimmten
+Versuch ab. M0 und BitWorld dienen als Referenzanwendungen und zur Prüfung der
+Bibliothek. Ausführbare Einstiege liegen unter `examples/`; die Bibliothek wird
+über `src/lib.rs` eingebunden. Das Beispiel `minimal_network` zeigt den Einstieg
+mit zwei verbundenen Neuronen.
+
 ## Aktiver Datenpfad
 
 ```text
