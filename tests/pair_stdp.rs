@@ -3,6 +3,7 @@ use nerva::{
     core::{Network, Neuron, NeuronId, Polarity, SimTime, Synapse, SynapseId},
     learning::{DecayingTrace, PairStdp},
     math::Position3D,
+    primitives::Weight,
     runtime::{ObservationEvent, Simulation},
 };
 
@@ -17,7 +18,7 @@ enum PairOrder {
 }
 
 struct PairOutcome {
-    weight: f32,
+    weight: Weight,
     pre_trace: f32,
     post_trace: Option<DecayingTrace>,
     transmission_count: u64,
@@ -71,8 +72,15 @@ fn run_pair(
     network.add_neuron(neuron(POST)).expect("unique post cell");
     network
         .add_synapse(
-            Synapse::new(CONNECTION, PRE, POST, initial_weight, 10, true)
-                .expect("valid plastic connection"),
+            Synapse::new(
+                CONNECTION,
+                PRE,
+                POST,
+                Weight::new(initial_weight).unwrap(),
+                10,
+                true,
+            )
+            .expect("valid plastic connection"),
         )
         .expect("unique synapse");
 
@@ -139,10 +147,10 @@ fn runtime_pair_order_selects_potentiation_or_depression() {
 
     let expected_ltp = 0.5 + config.a_plus * (-(10.0_f32) / config.tau_plus_us).exp();
     let expected_ltd = 0.5 - config.a_minus * (-(20.0_f32) / config.tau_minus_us).exp();
-    assert_close(causal.weight, expected_ltp);
-    assert_close(anti_causal.weight, expected_ltd);
-    assert!(causal.weight > 0.5);
-    assert!(anti_causal.weight < 0.5);
+    assert_close(causal.weight.get(), expected_ltp);
+    assert_close(anti_causal.weight.get(), expected_ltd);
+    assert!(causal.weight.get() > 0.5);
+    assert!(anti_causal.weight.get() < 0.5);
     assert!(
         causal
             .log
@@ -161,7 +169,7 @@ fn runtime_pair_order_selects_potentiation_or_depression() {
 fn runtime_freeze_keeps_weights_and_learning_traces_fixed_while_spikes_propagate() {
     let frozen = run_pair(learning_config(), 0.5, PairOrder::Causal, true);
 
-    assert_eq!(frozen.weight, 0.5);
+    assert_eq!(frozen.weight, Weight::new(0.5).unwrap());
     assert_eq!(frozen.pre_trace, 0.0);
     assert_eq!(frozen.post_trace, None);
     assert_eq!(frozen.transmission_count, 1);
@@ -184,6 +192,6 @@ fn runtime_stdp_cannot_escape_configured_weight_bounds() {
     let potentiated = run_pair(config, 0.5, PairOrder::Causal, false);
     let depressed = run_pair(config, 0.5, PairOrder::AntiCausal, false);
 
-    assert_eq!(potentiated.weight, config.max_weight);
-    assert_eq!(depressed.weight, config.min_weight);
+    assert_eq!(potentiated.weight, Weight::new(config.max_weight).unwrap());
+    assert_eq!(depressed.weight, Weight::new(config.min_weight).unwrap());
 }

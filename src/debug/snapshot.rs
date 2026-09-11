@@ -3,6 +3,7 @@
 use crate::{
     core::{IntrinsicState, Network, NeuronId, SimTime, SynapseId},
     math::Position3D,
+    primitives::Weight,
 };
 
 /// Copied neuron state with no mutation path back to the simulation.
@@ -40,7 +41,7 @@ pub struct SynapseSnapshot {
     /// Postsynaptic neuron.
     pub post: NeuronId,
     /// Non-negative magnitude.
-    pub weight: f32,
+    pub weight: Weight,
     /// Whether transmission is active.
     pub enabled: bool,
 }
@@ -132,7 +133,15 @@ mod tests {
         network.add_neuron(neuron(1, 1.0)).unwrap();
         network
             .add_synapse(
-                Synapse::new(SynapseId(7), NeuronId(2), NeuronId(1), 0.4, 10, true).unwrap(),
+                Synapse::new(
+                    SynapseId(7),
+                    NeuronId(2),
+                    NeuronId(1),
+                    Weight::new(0.4).unwrap(),
+                    10,
+                    true,
+                )
+                .unwrap(),
             )
             .unwrap();
         network
@@ -153,7 +162,7 @@ mod tests {
         );
         assert_eq!(snapshot.neurons[0].position.x, 1.0);
         assert_eq!(snapshot.synapses[0].id, SynapseId(7));
-        assert_eq!(snapshot.synapses[0].weight, 0.4);
+        assert_eq!(snapshot.synapses[0].weight, Weight::new(0.4).unwrap());
         assert!(!snapshot.synapses[0].enabled);
     }
 

@@ -2,15 +2,19 @@
 
 use std::{error::Error, fmt};
 
-use crate::math::decay_to_zero;
+use crate::{
+    math::decay_to_zero,
+    primitives::{SignalStrength, Weight},
+};
 
 use super::{NeuronId, Polarity, SimTime, SynapseId};
 
 /// A directed connection whose weight is always a non-negative magnitude.
 ///
 /// Excitatory versus inhibitory effect is intentionally absent: callers derive
-/// the sign exclusively from the presynaptic neuron's [`Polarity`]. This makes
-/// it impossible for an STDP update to flip cell polarity.
+/// the sign exclusively from the presynaptic neuron's [`Polarity`] when a
+/// signed [`SignalStrength`] amplitude is formed. This makes it impossible for
+/// an STDP update to flip cell polarity.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Synapse {
     /// Stable identity of this connection.
@@ -20,7 +24,7 @@ pub struct Synapse {
     /// Postsynaptic neuron identity.
     pub(crate) post: NeuronId,
     /// Current non-negative connection magnitude.
-    pub(crate) weight: f32,
+    pub(crate) weight: Weight,
     /// Strictly positive propagation delay in microseconds.
     pub(crate) delay_us: u64,
     /// Whether a local learning rule may change this connection.
@@ -41,7 +45,7 @@ impl Synapse {
         id: SynapseId,
         pre: NeuronId,
         post: NeuronId,
-        weight: f32,
+        weight: Weight,
         delay_us: u64,
         plastic: bool,
     ) -> Result<Self, SynapseError> {
@@ -78,7 +82,7 @@ impl Synapse {
     }
 
     /// Current non-negative connection magnitude.
-    pub const fn weight(&self) -> f32 {
+    pub const fn weight(&self) -> Weight {
         self.weight
     }
 
@@ -122,25 +126,31 @@ impl Synapse {
         Ok(())
     }
 
-    /// Returns the signed weight implied by the emitting neuron's polarity.
-    pub fn signed_weight(&self, presynaptic_polarity: Polarity) -> f32 {
-        presynaptic_polarity.apply(self.weight)
+    /// Returns the signed signal amplitude implied by the emitting neuron's
+    /// polarity.
+    ///
+    /// A `Weight` is a non-negative magnitude; the signed contribution of a
+    /// connection is a distinct domain, expressed as a `SignalStrength`.
+    pub fn signed_amplitude(&self, presynaptic_polarity: Polarity) -> SignalStrength {
+        presynaptic_polarity.apply_to_weight(self.weight)
     }
 
-    /// Applies a validated spatial attenuation factor to the signed weight.
-    pub fn effective_weight(
+    /// Applies a validated spatial attenuation factor to the signed amplitude.
+    pub fn effective_amplitude(
         &self,
         presynaptic_polarity: Polarity,
         attenuation: f32,
-    ) -> Result<f32, SynapseError> {
+    ) -> Result<SignalStrength, SynapseError> {
         if !attenuation.is_finite() || !(0.0..=1.0).contains(&attenuation) {
             return Err(SynapseError::InvalidAttenuation(attenuation));
         }
-        Ok(self.signed_weight(presynaptic_polarity) * attenuation)
+        Ok(SignalStrength::new(
+            presynaptic_polarity.sign() * self.weight.get() * attenuation,
+        ))
     }
 
     /// Changes the weight without permitting a sign-bearing negative value.
-    pub fn set_weight(&mut self, weight: f32) -> Result<(), SynapseError> {
+    pub fn set_weight(&mut self, weight: Weight) -> Result<(), SynapseError> {
         validate_weight(weight)?;
         self.weight = weight;
         Ok(())
@@ -167,21 +177,21 @@ impl Synapse {
     /// value actually stored.
     pub fn set_weight_clamped(
         &mut self,
-        proposed: f32,
-        min_weight: f32,
-        max_weight: f32,
-    ) -> Result<f32, SynapseError> {
+        proposed: Weight,
+        min_weight: Weight,
+        max_weight: Weight,
+    ) -> Result<Weight, SynapseError> {
         validate_weight(proposed)?;
         validate_weight(min_weight)?;
         validate_weight(max_weight)?;
         if min_weight > max_weight {
             return Err(SynapseError::InvalidWeightBounds {
-                min: min_weight,
-                max: max_weight,
+                min: min_weight.get(),
+                max: max_weight.get(),
             });
         }
 
-        let clamped = proposed.clamp(min_weight, max_weight);
+        let clamped = proposed.clamp_to(min_weight, max_weight);
         self.weight = clamped;
         Ok(clamped)
     }
@@ -219,12 +229,12 @@ impl Synapse {
     }
 }
 
-fn validate_weight(weight: f32) -> Result<(), SynapseError> {
+fn validate_weight(weight: Weight) -> Result<(), SynapseError> {
     if !weight.is_finite() {
-        return Err(SynapseError::NonFiniteWeight(weight));
+        return Err(SynapseError::NonFiniteWeight(weight.get()));
     }
-    if weight < 0.0 {
-        return Err(SynapseError::NegativeWeight(weight));
+    if weight.get() < 0.0 {
+        return Err(SynapseError::NegativeWeight(weight.get()));
     }
     Ok(())
 }
@@ -316,33 +326,78 @@ impl Error for SynapseError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitives::WeightError;
 
     fn synapse(weight: f32) -> Result<Synapse, SynapseError> {
-        Synapse::new(SynapseId(10), NeuronId(1), NeuronId(2), weight, 5, true)
+        Synapse::new(
+            SynapseId(10),
+            NeuronId(1),
+            NeuronId(2),
+            Weight::new(weight).map_err(synapse_weight_error)?,
+            5,
+            true,
+        )
+    }
+
+    fn synapse_weight_error(error: WeightError) -> SynapseError {
+        match error {
+            WeightError::NonFinite(value) => SynapseError::NonFiniteWeight(value),
+            WeightError::Negative(value) => SynapseError::NegativeWeight(value),
+        }
     }
 
     #[test]
     fn rejects_negative_weight_to_protect_sender_polarity() {
-        assert_eq!(synapse(-0.1), Err(SynapseError::NegativeWeight(-0.1)));
+        assert!(matches!(
+            Weight::new(-0.1),
+            Err(WeightError::Negative(-0.1))
+        ));
+        assert!(matches!(
+            synapse(-0.1),
+            Err(SynapseError::NegativeWeight(-0.1))
+        ));
+        assert!(matches!(
+            Weight::new(f32::NAN),
+            Err(WeightError::NonFinite(_))
+        ));
+        assert!(matches!(
+            Weight::new(f32::INFINITY),
+            Err(WeightError::NonFinite(_))
+        ));
     }
 
     #[test]
     fn sender_polarity_determines_effect_sign() {
         let synapse = synapse(0.5).expect("valid synapse");
 
-        assert_eq!(synapse.signed_weight(Polarity::Excitatory), 0.5);
-        assert_eq!(synapse.signed_weight(Polarity::Inhibitory), -0.5);
+        assert_eq!(
+            synapse.signed_amplitude(Polarity::Excitatory),
+            SignalStrength::new(0.5)
+        );
+        assert_eq!(
+            synapse.signed_amplitude(Polarity::Inhibitory),
+            SignalStrength::new(-0.5)
+        );
     }
 
     #[test]
     fn learning_cannot_cross_zero() {
         let mut synapse = synapse(0.1).expect("valid synapse");
 
-        assert_eq!(synapse.set_weight_clamped(0.0, 0.05, 1.0), Ok(0.05));
-        assert_eq!(synapse.weight(), 0.05);
+        assert_eq!(
+            synapse.set_weight_clamped(
+                Weight::new(0.0).unwrap(),
+                Weight::new(0.05).unwrap(),
+                Weight::new(1.0).unwrap()
+            ),
+            Ok(Weight::new(0.05).unwrap())
+        );
+        assert_eq!(synapse.weight(), Weight::new(0.05).unwrap());
+        // The type itself rejects a negative magnitude, so no rule can even
+        // propose a sign-bearing weight.
         assert!(matches!(
-            synapse.set_weight_clamped(-0.1, 0.0, 1.0),
-            Err(SynapseError::NegativeWeight(_))
+            Weight::new(-0.1),
+            Err(WeightError::Negative(-0.1))
         ));
     }
 
@@ -368,7 +423,7 @@ mod tests {
         assert_eq!(synapse.id(), SynapseId(10));
         assert_eq!(synapse.pre(), NeuronId(1));
         assert_eq!(synapse.post(), NeuronId(2));
-        assert_eq!(synapse.weight(), 0.5);
+        assert_eq!(synapse.weight(), Weight::new(0.5).unwrap());
         assert_eq!(synapse.delay_us(), 5);
         assert!(synapse.is_plastic());
         assert!(synapse.is_enabled());
@@ -383,11 +438,12 @@ mod tests {
         assert_eq!(synapse.delay_us(), 8);
         assert!(!synapse.is_plastic());
         assert!(!synapse.is_enabled());
-        assert_eq!(
-            synapse.set_weight(-0.1),
-            Err(SynapseError::NegativeWeight(-0.1))
-        );
-        assert_eq!(synapse.weight(), 0.5);
+        // A negative magnitude cannot be constructed, preserving the weight.
+        assert!(matches!(
+            Weight::new(-0.1),
+            Err(WeightError::Negative(-0.1))
+        ));
+        assert_eq!(synapse.weight(), Weight::new(0.5).unwrap());
         assert_eq!(synapse.set_delay_us(0), Err(SynapseError::ZeroDelay));
         assert_eq!(synapse.delay_us(), 8);
     }
@@ -395,7 +451,14 @@ mod tests {
     #[test]
     fn zero_delay_is_rejected_to_keep_batches_causal() {
         assert_eq!(
-            Synapse::new(SynapseId(1), NeuronId(1), NeuronId(2), 0.5, 0, false,),
+            Synapse::new(
+                SynapseId(1),
+                NeuronId(1),
+                NeuronId(2),
+                Weight::new(0.5).unwrap(),
+                0,
+                false,
+            ),
             Err(SynapseError::ZeroDelay)
         );
     }

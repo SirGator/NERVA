@@ -4,9 +4,13 @@
 //! deliberately contain no neuron, synapse, network, plasticity, event, or
 //! runtime policy.
 //!
-//! The typed scalar domains are a prepared migration API. The active M0 data
-//! path still uses some raw `f32` values and will migrate one complete path at
-//! a time so partially typed state cannot split invariants across layers.
+//! The typed scalar domains support an end-to-end, path-by-path migration.
+//! `Weight` is a validated, non-negative, finite magnitude whose inner value
+//! is private; the signed contribution of a connection is a separate
+//! `SignalStrength` derived from the weight and the presynaptic polarity.
+//! Membrane potential and threshold still use raw `f32` and will each migrate
+//! as one complete path so partially typed state cannot split invariants
+//! across layers.
 
 /// Scalar modulator concentrations.
 pub mod concentration;
@@ -29,4 +33,4 @@ pub use position::{Position3, Position3D, PositionError};
 pub use potential::{Potential, Threshold};
 pub use signal::{Activity, Distance, EnergyCost, SignalStrength};
 pub use time::{SimTime, SimTimeError};
-pub use weight::Weight;
+pub use weight::{Weight, WeightError};

@@ -24,8 +24,16 @@ fn every_supported_primitive_is_publicly_available() {
 
     assert_eq!(Potential(-65.0).get(), -65.0);
     assert_eq!(Threshold(-50.0).get(), -50.0);
-    assert_eq!(Weight(0.4).get(), 0.4);
-    assert_eq!(SignalStrength(0.5).get(), 0.5);
+    assert_eq!(Weight::new(0.4).unwrap().get(), 0.4);
+    assert!(matches!(
+        nerva::primitives::Weight::new(-0.1),
+        Err(nerva::primitives::WeightError::Negative(-0.1))
+    ));
+    assert!(matches!(
+        nerva::primitives::Weight::new(f32::NAN),
+        Err(nerva::primitives::WeightError::NonFinite(_))
+    ));
+    assert_eq!(SignalStrength::new(-0.5).get(), -0.5);
     assert_eq!(Concentration(0.6).get(), 0.6);
     assert_eq!(Activity(0.7).get(), 0.7);
     assert_eq!(Distance(0.8).get(), 0.8);

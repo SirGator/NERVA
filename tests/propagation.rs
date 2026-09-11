@@ -3,6 +3,7 @@ use nerva::{
     core::{Network, Neuron, NeuronId, Polarity, SimTime, Synapse, SynapseId},
     learning::NoPlasticity,
     math::Position3D,
+    primitives::Weight,
     runtime::{ObservationEvent, Simulation},
 };
 
@@ -47,7 +48,15 @@ fn emitted_spike_arrives_only_after_delay_with_distance_attenuation() {
         .expect("unique target");
     network
         .add_synapse(
-            Synapse::new(synapse_id, source, target, 2.0, 7, false).expect("valid connection"),
+            Synapse::new(
+                synapse_id,
+                source,
+                target,
+                Weight::new(2.0).unwrap(),
+                7,
+                false,
+            )
+            .expect("valid connection"),
         )
         .expect("unique synapse");
 

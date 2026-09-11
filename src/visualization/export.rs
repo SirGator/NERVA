@@ -93,7 +93,7 @@ impl VisualizationExport {
             .synapses()
             .map(|synapse| WeightRecord {
                 synapse_id: synapse.id(),
-                weight: synapse.weight(),
+                weight: synapse.weight().get(),
             })
             .collect();
         let mut spike_times: Vec<_> = spikes
@@ -351,6 +351,7 @@ mod tests {
     use crate::{
         config::NeuronConfig,
         core::{Neuron, NeuronRole, Polarity, Synapse},
+        primitives::Weight,
     };
 
     use super::*;
@@ -377,7 +378,15 @@ mod tests {
         }
         network
             .add_synapse(
-                Synapse::new(SynapseId(9), NeuronId(2), NeuronId(1), 0.75, 12, true).unwrap(),
+                Synapse::new(
+                    SynapseId(9),
+                    NeuronId(2),
+                    NeuronId(1),
+                    Weight::new(0.75).unwrap(),
+                    12,
+                    true,
+                )
+                .unwrap(),
             )
             .unwrap();
         network

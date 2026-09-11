@@ -10,6 +10,7 @@ use crate::{
     math::{Position3D, conduction_delay_us},
     metrics::{FiringMetrics, SequenceMetrics, WeightMetrics},
     nerves::{Fiber, FiberDirection, FiberId, Mapping, Routing},
+    primitives::Weight,
     roots::{PatternInputRoot, RootChannel, RootId},
     runtime::{ObservationEvent, Simulation},
     transduction::{Encoder, PatternEncoder},
@@ -414,7 +415,7 @@ impl M0Experiment {
             .map(|synapse| synapse.weight())
             .collect();
         let weight_metrics = WeightMetrics::from_weights(
-            plastic_weights.iter().copied(),
+            plastic_weights.iter().copied().map(Weight::get),
             self.config.nerva.learning.min_weight,
             self.config.nerva.learning.max_weight,
         );
@@ -684,6 +685,10 @@ fn binomial_coefficient(n: usize, k: usize) -> f64 {
     })
 }
 
+fn weight(value: f32) -> Result<Weight, ExperimentError> {
+    Weight::new(value).map_err(|error| ExperimentError::new("weight", error.to_string()))
+}
+
 fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, ExperimentError> {
     // Every group for one seed sees the identical paired initial state. Across
     // seeds, stratified permutations supply genuine independent initial states.
@@ -756,7 +761,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                     SynapseId(synapse_id),
                     sensory[&pattern],
                     pattern_cells[&pattern],
-                    config.sensory_weight,
+                    weight(config.sensory_weight)?,
                     1,
                     false,
                 )
@@ -796,7 +801,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                         SynapseId(synapse_id),
                         pattern_cells[&pre_pattern],
                         pattern_cells[&post_pattern],
-                        initial_weight,
+                        weight(initial_weight)?,
                         delay_us,
                         true,
                     )
@@ -817,7 +822,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                     SynapseId(synapse_id),
                     pattern_cells[&pattern],
                     inhibitory_id,
-                    config.inhibitory_drive_weight,
+                    weight(config.inhibitory_drive_weight)?,
                     config.inhibitory_delay_us,
                     false,
                 )
@@ -831,7 +836,7 @@ fn build_network(config: &M0ExperimentConfig) -> Result<PatternNeuronMaps, Exper
                     SynapseId(synapse_id),
                     inhibitory_id,
                     pattern_cells[&pattern],
-                    config.inhibitory_feedback_weight,
+                    weight(config.inhibitory_feedback_weight)?,
                     config.inhibitory_delay_us,
                     false,
                 )
@@ -996,13 +1001,13 @@ fn expected_transition_indices(
         .collect()
 }
 
-fn mean_weight_delta(initial: &[f32], final_weights: &[f32], indices: &[usize]) -> f32 {
+fn mean_weight_delta(initial: &[Weight], final_weights: &[Weight], indices: &[usize]) -> f32 {
     if indices.is_empty() {
         return 0.0;
     }
     let sum: f64 = indices
         .iter()
-        .map(|&index| f64::from(final_weights[index]) - f64::from(initial[index]))
+        .map(|&index| f64::from(final_weights[index].get()) - f64::from(initial[index].get()))
         .sum();
     (sum / indices.len() as f64) as f32
 }
@@ -1129,7 +1134,7 @@ mod tests {
             pattern_ids.contains(&synapse.pre())
                 && pattern_ids.contains(&synapse.post())
                 && synapse.pre() != synapse.post()
-                && (synapse.weight() - config.recurrent_weight).abs()
+                && (synapse.weight().get() - config.recurrent_weight).abs()
                     <= config.recurrent_weight_jitter + f32::EPSILON
                 && synapse.delay_us() == config.sequence_delay_us
         }));

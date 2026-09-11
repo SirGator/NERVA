@@ -5,6 +5,7 @@ use nerva::{
     core::{Network, Neuron, NeuronId, Polarity, SimTime, Synapse, SynapseId},
     learning::NoPlasticity,
     math::Position3D,
+    primitives::Weight,
     runtime::{ObservationEvent, Simulation},
 };
 
@@ -28,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SynapseId(1),
         NeuronId(1),
         NeuronId(2),
-        20.0,
+        Weight::new(20.0)?,
         1_000,
         false,
     )?)?;

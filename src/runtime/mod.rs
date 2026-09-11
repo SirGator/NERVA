@@ -2,6 +2,10 @@
 
 /// Complete equal-timestamp event batches.
 pub mod event_batch;
+/// Runtime-only recurring-maintenance booking registry.
+mod homeostasis_booking;
+/// Runtime-only autonomous-spike booking registry.
+mod intrinsic_booking;
 /// Delayed and distance-attenuated spike propagation.
 pub mod propagation;
 /// Technical `(timestamp, insertion_sequence)` scheduler.

@@ -3,6 +3,7 @@
 use crate::{
     core::{NeuronId, SimTime},
     environment::Pattern,
+    primitives::Weight,
     runtime::ObservationEvent,
 };
 
@@ -93,9 +94,9 @@ pub struct M0GroupResult {
     /// Pattern-classified spikes observed after the A-only cue.
     pub predicted_patterns: Vec<(SimTime, Pattern)>,
     /// Final internal weights in stable synapse-ID order.
-    pub final_weights: Vec<f32>,
+    pub final_weights: Vec<Weight>,
     /// Initial weights in the same stable synapse-ID order.
-    pub initial_weights: Vec<f32>,
+    pub initial_weights: Vec<Weight>,
     /// Probe and stability measurements.
     pub metrics: M0Metrics,
     /// Stable digest of the immutable observation log.

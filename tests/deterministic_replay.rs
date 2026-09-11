@@ -3,6 +3,7 @@ use nerva::{
     core::{Network, Neuron, NeuronId, Polarity, SimTime, Synapse, SynapseId},
     learning::{DecayingTrace, PairStdp},
     math::Position3D,
+    primitives::Weight,
     runtime::{EventLog, ObservationEvent, RunReport, Simulation},
 };
 
@@ -44,12 +45,33 @@ fn replay(seed: u64, reverse_synapse_insertion: bool) -> ReplayOutcome {
     }
 
     let mut synapses = vec![
-        Synapse::new(SynapseId(11), NeuronId(1), NeuronId(2), 0.55, 7, true)
-            .expect("valid first synapse"),
-        Synapse::new(SynapseId(12), NeuronId(2), NeuronId(3), 0.65, 5, true)
-            .expect("valid second synapse"),
-        Synapse::new(SynapseId(13), NeuronId(3), NeuronId(1), 0.20, 9, false)
-            .expect("valid fixed synapse"),
+        Synapse::new(
+            SynapseId(11),
+            NeuronId(1),
+            NeuronId(2),
+            Weight::new(0.55).unwrap(),
+            7,
+            true,
+        )
+        .expect("valid first synapse"),
+        Synapse::new(
+            SynapseId(12),
+            NeuronId(2),
+            NeuronId(3),
+            Weight::new(0.65).unwrap(),
+            5,
+            true,
+        )
+        .expect("valid second synapse"),
+        Synapse::new(
+            SynapseId(13),
+            NeuronId(3),
+            NeuronId(1),
+            Weight::new(0.20).unwrap(),
+            9,
+            false,
+        )
+        .expect("valid fixed synapse"),
     ];
     if reverse_synapse_insertion {
         synapses.reverse();

@@ -5,6 +5,7 @@ use std::{error::Error, fmt};
 use crate::{
     config::{ConfigError, NeuronConfig},
     math::{Position3D, PositionError, decay_to_zero, decay_towards},
+    primitives::{SignalStrength, Weight},
 };
 
 use super::{
@@ -33,6 +34,14 @@ impl Polarity {
     /// Applies this polarity to a non-negative magnitude.
     pub fn apply(self, magnitude: f32) -> f32 {
         self.sign() * magnitude
+    }
+
+    /// Derives the signed signal amplitude of a typed weight magnitude.
+    ///
+    /// A `Weight` is never signed; the contribution sign is exclusively the
+    /// polarity of the emitting cell.
+    pub fn apply_to_weight(self, weight: Weight) -> SignalStrength {
+        SignalStrength::new(self.sign() * weight.get())
     }
 }
 
@@ -89,11 +98,6 @@ pub struct Neuron {
     /// Local future-facing signal; it never directly mutates graph topology.
     structural_drive: f32,
     last_homeostasis_update: SimTime,
-    next_homeostasis_update: Option<SimTime>,
-    next_intrinsic_spike: Option<SimTime>,
-    /// Scheduler sequence for the prediction above, allowing eager removal
-    /// when a local input or current adjustment supersedes it.
-    next_intrinsic_spike_sequence: Option<u64>,
 }
 
 impl Neuron {
@@ -130,9 +134,6 @@ impl Neuron {
             intrinsic_current: 0.0,
             structural_drive: 0.0,
             last_homeostasis_update: start_time,
-            next_homeostasis_update: None,
-            next_intrinsic_spike: None,
-            next_intrinsic_spike_sequence: None,
         })
     }
 
@@ -236,24 +237,6 @@ impl Neuron {
             intrinsic_current: self.intrinsic_current,
             structural_drive: self.structural_drive,
         }
-    }
-
-    /// Timestamp of the next local maintenance event, if its clock is active.
-    pub const fn next_homeostasis_update(&self) -> Option<SimTime> {
-        self.next_homeostasis_update
-    }
-
-    /// Timestamp of the currently predicted autonomous threshold crossing.
-    pub const fn next_intrinsic_spike(&self) -> Option<SimTime> {
-        self.next_intrinsic_spike
-    }
-
-    /// Scheduler sequence for the currently predicted autonomous crossing.
-    ///
-    /// This is runtime bookkeeping rather than neural state. It is paired
-    /// with [`Self::next_intrinsic_spike`] whenever a prediction is queued.
-    pub const fn next_intrinsic_spike_sequence(&self) -> Option<u64> {
-        self.next_intrinsic_spike_sequence
     }
 
     /// Whether a spike is prohibited at `time` by the local refractory state.
@@ -603,19 +586,6 @@ impl Neuron {
     /// time on the first newly enabled maintenance event.
     pub fn reset_homeostasis_time_anchor(&mut self, time: SimTime) -> Result<(), NeuronError> {
         self.record_homeostasis_update(time)
-    }
-
-    /// Records the next local maintenance deadline owned by this neuron.
-    pub fn set_next_homeostasis_update(&mut self, time: Option<SimTime>) {
-        self.next_homeostasis_update = time;
-    }
-
-    /// Records the currently scheduled autonomous threshold-crossing event
-    /// and its scheduler sequence.
-    pub fn set_next_intrinsic_spike(&mut self, time: Option<SimTime>, sequence: Option<u64>) {
-        debug_assert_eq!(time.is_some(), sequence.is_some());
-        self.next_intrinsic_spike = time;
-        self.next_intrinsic_spike_sequence = sequence;
     }
 
     /// Predicts the next autonomous threshold crossing from local continuous
@@ -1255,6 +1225,14 @@ mod tests {
     fn polarity_is_the_only_source_of_synaptic_sign() {
         assert_eq!(Polarity::Excitatory.apply(0.5), 0.5);
         assert_eq!(Polarity::Inhibitory.apply(0.5), -0.5);
+        assert_eq!(
+            Polarity::Excitatory.apply_to_weight(Weight::new(0.5).unwrap()),
+            SignalStrength::new(0.5)
+        );
+        assert_eq!(
+            Polarity::Inhibitory.apply_to_weight(Weight::new(0.5).unwrap()),
+            SignalStrength::new(-0.5)
+        );
     }
 
     #[test]

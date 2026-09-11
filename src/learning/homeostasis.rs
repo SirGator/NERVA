@@ -43,7 +43,7 @@ pub struct HomeostaticChange {
 /// more excitable. A neuron with too little input raises structural drive
 /// instead, allowing a later growth/pruning slice to search locally without
 /// mistaking missing connectivity for missing excitability.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LocalHomeostasis {
     enabled: bool,
     update_interval_us: u64,

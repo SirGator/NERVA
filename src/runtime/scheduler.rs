@@ -67,7 +67,7 @@ impl fmt::Display for SchedulerError {
 impl Error for SchedulerError {}
 
 /// A deterministic priority queue ordered by `(timestamp, insertion_sequence)`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EventScheduler<E> {
     /// Events are keyed by their two deterministic ordering keys. A map, in
     /// contrast to a binary heap with tombstones, lets a superseded predicted
@@ -161,6 +161,25 @@ impl<E> EventScheduler<E> {
             return false;
         };
         self.events.remove(&(time, insertion_sequence)).is_some()
+    }
+
+    /// Eagerly cancels every queued event whose payload matches `predicate`.
+    ///
+    /// Runtime topology mutations use this to remove events that can no
+    /// longer be delivered after an object is removed. Cancellation preserves
+    /// the scheduler's monotonic time and insertion-sequence invariants.
+    pub fn cancel_matching(&mut self, mut predicate: impl FnMut(&E) -> bool) -> usize {
+        let sequences: Vec<_> = self
+            .events
+            .iter()
+            .filter_map(|(&(_, sequence), payload)| predicate(payload).then_some(sequence))
+            .collect();
+        let count = sequences.len();
+        for sequence in sequences {
+            let cancelled = self.cancel(sequence);
+            debug_assert!(cancelled, "queued event disappeared while cancelling it");
+        }
+        count
     }
 
     /// Removes every event at the earliest timestamp as one atomic batch.
@@ -298,5 +317,19 @@ mod tests {
 
         let batch = scheduler.pop_next_batch(10).unwrap().unwrap();
         assert_eq!(batch.events()[0].payload, 'b');
+    }
+
+    #[test]
+    fn predicate_cancellation_removes_only_matching_queued_events() {
+        let mut scheduler = EventScheduler::new();
+        scheduler.schedule(SimTime(10), ('a', 1)).unwrap();
+        scheduler.schedule(SimTime(20), ('b', 2)).unwrap();
+        scheduler.schedule(SimTime(30), ('a', 3)).unwrap();
+
+        assert_eq!(scheduler.cancel_matching(|(kind, _)| *kind == 'a'), 2);
+        assert_eq!(scheduler.len(), 1);
+        let batch = scheduler.pop_next_batch(10).unwrap().unwrap();
+        assert_eq!(batch.time(), SimTime(20));
+        assert_eq!(batch.events()[0].payload, ('b', 2));
     }
 }

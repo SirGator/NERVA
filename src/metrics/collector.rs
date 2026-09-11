@@ -48,7 +48,7 @@ impl MetricsCollector {
     /// Samples current magnitudes through the network's immutable API.
     pub fn sample_network_weights(&mut self, network: &Network, min_weight: f32, max_weight: f32) {
         self.sample_weights(
-            network.synapses().map(|synapse| synapse.weight()),
+            network.synapses().map(|synapse| synapse.weight().get()),
             min_weight,
             max_weight,
         );

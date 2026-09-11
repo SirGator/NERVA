@@ -63,14 +63,25 @@ Only the physical root/transduction/nerve attachment remains a fixed boundary;
 future structural formation and pruning belongs to `development`.
 
 The typed scalar primitives (`Potential`, `Threshold`, `Weight`,
-`SignalStrength`, and related domains) prepare a gradual migration. Active M0
-state still uses raw `f32` in several paths; each path will be converted end to
-end instead of mixing representations within one invariant.
+`SignalStrength`, and related domains) support a gradual migration. The
+synaptic weight path (`core::Synapse`, `learning::WeightBounds` and
+`PairStdp`, `runtime::ObservationEvent::WeightChanged`, and the M0 experiment
+weight records) is migrated end to end to `Weight`; membrane potential,
+threshold, and input amplitude still use raw `f32` and will each be converted
+as one complete path instead of mixing representations within one invariant.
 
-Weights are non-negative magnitudes. Excitatory or inhibitory effect is always
-derived from the presynaptic neuron's polarity, so learning cannot flip a
-connection's sign. Positions affect geometry, attenuation, and delay; only
-`NeuronId` defines identity.
+Weights are non-negative magnitudes whose type validates finiteness and sign
+at construction. Excitatory or inhibitory effect is always derived from the
+presynaptic neuron's polarity when a signed signal amplitude is formed, so
+learning cannot flip a connection's sign. Positions affect geometry,
+attenuation, and delay; only `NeuronId` defines identity.
+
+A live `Simulation` is only mutated through controlled methods
+(`add_neuron`, `remove_neuron`, `add_synapse`, `remove_synapse`,
+`update_neuron`, `update_synapse`) that keep
+the scheduler, the per-neuron homeostasis clocks, and the intrinsic spike
+predictions consistent. A fatal error inside a batch poisons the runtime:
+partially applied state may remain, and every further use is rejected.
 
 ## M0 reference experiment
 
@@ -86,6 +97,11 @@ The assay gives all twelve directed non-self pattern transitions identical
 tetrahedral geometry. A target-blind, balanced pool of seeded initial-weight
 offsets is shared by G1–G4 within each paired seed. The target sequence is
 supplied by temporal experience rather than hard-coded connectivity.
+
+M0 is an engineering criterion, not a scientific proof: it demonstrates that
+this concrete setup reproduces the declared behavior deterministically under
+the six fixed seeds. It does not establish robustness across wider parameter
+ranges, other sequences or network sizes, or seeds outside the fixed set.
 
 ```bash
 cargo run --example m0_sequence

@@ -128,8 +128,9 @@ pub fn plan_spike_propagation(
         let attenuation = try_distance_attenuation(distance, distance_decay_length)
             .map_err(PropagationError::InvalidAttenuation)?;
         let amplitude = synapse
-            .effective_weight(source_polarity, attenuation)
-            .map_err(PropagationError::InvalidSynapse)?;
+            .effective_amplitude(source_polarity, attenuation)
+            .map_err(PropagationError::InvalidSynapse)?
+            .get();
         let arrives_at = spike.time.checked_add_us(synapse.delay_us()).ok_or(
             PropagationError::ArrivalTimeOverflow {
                 emitted_at: spike.time,
@@ -159,6 +160,7 @@ mod tests {
         config::NeuronConfig,
         core::{Network, Neuron, Polarity, Synapse},
         math::Position3D,
+        primitives::Weight,
     };
 
     use super::*;
@@ -195,7 +197,15 @@ mod tests {
             .unwrap();
         network
             .add_synapse(
-                Synapse::new(SynapseId(7), NeuronId(1), NeuronId(2), 2.0, 5, true).unwrap(),
+                Synapse::new(
+                    SynapseId(7),
+                    NeuronId(1),
+                    NeuronId(2),
+                    Weight::new(2.0).unwrap(),
+                    5,
+                    true,
+                )
+                .unwrap(),
             )
             .unwrap();
         network

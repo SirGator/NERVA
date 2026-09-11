@@ -1,5 +1,8 @@
-use nerva::experiment::{
-    M0Experiment, M0ExperimentConfig, M0Group, M0StudyConfig, run_m0_comparison, run_m0_study,
+use nerva::{
+    experiment::{
+        M0Experiment, M0ExperimentConfig, M0Group, M0StudyConfig, run_m0_comparison, run_m0_study,
+    },
+    primitives::Weight,
 };
 
 #[test]
@@ -56,18 +59,18 @@ fn symmetric_topology_and_frozen_probe_leave_weights_unchanged() {
     assert!(
         fixed.final_weights[..4]
             .iter()
-            .all(|&weight| weight == config.sensory_weight)
+            .all(|&weight| weight == Weight::new(config.sensory_weight).unwrap())
     );
     assert!(
         fixed.final_weights[4..16]
             .iter()
-            .all(|&weight| (weight - config.recurrent_weight).abs()
+            .all(|&weight| (weight.get() - config.recurrent_weight).abs()
                 <= config.recurrent_weight_jitter + f32::EPSILON)
     );
     assert!(fixed.final_weights[16..].chunks_exact(2).all(|pair| {
         pair == [
-            config.inhibitory_drive_weight,
-            config.inhibitory_feedback_weight,
+            Weight::new(config.inhibitory_drive_weight).unwrap(),
+            Weight::new(config.inhibitory_feedback_weight).unwrap(),
         ]
     }));
     assert_eq!(fixed.initial_weights, fixed.final_weights);

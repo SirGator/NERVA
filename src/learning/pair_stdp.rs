@@ -1,4 +1,13 @@
 //! Local pair-based spike-timing-dependent plasticity for M0.
+//!
+//! This rule is a **nearest-neighbor pair-based STDP** variant: each weight
+//! update couples a spike exclusively with the *most recent* stored
+//! pre- or postsynaptic spike inside the finite pair window. The maintained
+//! pre- and postsynaptic traces record local history and enforce window
+//! membership exactly, but an update's magnitude depends only on the single
+//! nearest pair partner, not on an all-to-all trace-weighted sum over every
+//! previous spike. An all-to-all trace formulation is a deliberate future
+//! extension, not a property of this rule.
 
 use std::collections::HashMap;
 
@@ -28,9 +37,11 @@ pub enum PairStdpError {
 
 /// Pair-STDP state shared by local hooks in one network runtime.
 ///
-/// Synapses own their presynaptic traces. This rule owns one postsynaptic trace
-/// per neuron plus the latest local spike timestamps required to enforce the
-/// finite STDP window exactly.
+/// Synapses own their presynaptic traces. This rule owns one postsynaptic
+/// trace per neuron plus the latest local spike timestamps required to
+/// enforce the finite STDP window exactly. Each update pairs a spike with
+/// only the most recent opposite spike inside the window
+/// (nearest-neighbor pairing), rather than summing over all trace partners.
 #[derive(Debug)]
 pub struct PairStdp {
     enabled: bool,
@@ -113,7 +124,7 @@ impl PairStdp {
             && synapse.enabled
             && synapse.plastic
             && synapse.weight.is_finite()
-            && synapse.weight >= 0.0
+            && synapse.weight.get() >= 0.0
             && synapse.pre_trace.is_finite()
     }
 
@@ -250,6 +261,7 @@ mod tests {
         config::NeuronConfig,
         core::{NeuronId, Polarity, SynapseId},
         math::Position3D,
+        primitives::Weight,
     };
 
     use super::*;
@@ -289,8 +301,19 @@ mod tests {
     }
 
     fn synapse(id: u64, weight: f32) -> Synapse {
-        Synapse::new(SynapseId(id), NeuronId(1), NeuronId(2), weight, 1, true)
-            .expect("valid test synapse")
+        Synapse::new(
+            SynapseId(id),
+            NeuronId(1),
+            NeuronId(2),
+            Weight::new(weight).expect("valid test weight"),
+            1,
+            true,
+        )
+        .expect("valid test synapse")
+    }
+
+    fn weight(value: f32) -> Weight {
+        Weight::new(value).expect("valid test weight")
     }
 
     fn close(left: f32, right: f32) {
@@ -307,7 +330,7 @@ mod tests {
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(150));
 
         let expected = 0.5 + 0.2 * (-0.5_f32).exp();
-        close(synapse.weight(), expected);
+        close(synapse.weight().get(), expected);
         close(synapse.pre_trace(), (-0.5_f32).exp());
     }
 
@@ -321,7 +344,7 @@ mod tests {
         rule.on_pre_arrival(&mut synapse, &post, SimTime(150));
 
         let expected = 0.5 - 0.1 * (-0.25_f32).exp();
-        close(synapse.weight(), expected);
+        close(synapse.weight().get(), expected);
     }
 
     #[test]
@@ -333,7 +356,7 @@ mod tests {
         rule.on_pre_arrival(&mut synapse, &post, SimTime(0));
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(501));
 
-        assert_eq!(synapse.weight(), 0.5);
+        assert_eq!(synapse.weight(), weight(0.5));
     }
 
     #[test]
@@ -347,13 +370,13 @@ mod tests {
         let mut ltp = PairStdp::new(&strong_config);
         ltp.on_pre_arrival(&mut potentiated, &post, SimTime(0));
         ltp.on_post_spike(&post, std::slice::from_mut(&mut potentiated), SimTime(1));
-        assert_eq!(potentiated.weight(), strong_config.max_weight);
+        assert_eq!(potentiated.weight(), weight(strong_config.max_weight));
 
         let mut depressed = synapse(11, 0.5);
         let mut ltd = PairStdp::new(&strong_config);
         ltd.on_post_spike(&post, &mut [], SimTime(0));
         ltd.on_pre_arrival(&mut depressed, &post, SimTime(1));
-        assert_eq!(depressed.weight(), strong_config.min_weight);
+        assert_eq!(depressed.weight(), weight(strong_config.min_weight));
     }
 
     #[test]
@@ -368,7 +391,7 @@ mod tests {
             rule.on_pre_arrival(&mut synapse, &post, SimTime(0));
             rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(1));
 
-            assert_eq!(synapse.weight(), 0.5);
+            assert_eq!(synapse.weight(), weight(0.5));
             assert_eq!(synapse.pre_trace(), 0.0);
             assert_eq!(synapse.pre_trace_updated_at(), None);
         }
@@ -386,7 +409,7 @@ mod tests {
         rule.on_post_spike(&post, std::slice::from_mut(&mut first), SimTime(10));
         rule.on_post_spike(&post, std::slice::from_mut(&mut second), SimTime(10));
 
-        close(first.weight(), second.weight());
+        close(first.weight().get(), second.weight().get());
         assert_eq!(
             rule.post_trace(post.id()).map(|trace| trace.value()),
             Some(1.0)
@@ -404,7 +427,7 @@ mod tests {
         rule.on_pre_arrival(&mut synapse, &post, SimTime(0));
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(1));
 
-        assert_eq!(synapse.weight(), 0.5);
+        assert_eq!(synapse.weight(), weight(0.5));
         assert_eq!(synapse.pre_trace(), 0.0);
         assert_eq!(rule.post_trace(post.id()), None);
     }

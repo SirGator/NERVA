@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 use crate::{
     config::{NetworkConfig, NeuronConfig},
     math::{DecayError, try_distance_attenuation},
+    primitives::SignalStrength,
 };
 
 use super::{Neuron, NeuronId, Synapse, SynapseError, SynapseId};
@@ -307,13 +308,13 @@ impl Network {
             .map_err(NetworkError::InvalidAttenuation)
     }
 
-    /// Signed, distance-attenuated contribution of a synapse, deriving sign
-    /// exclusively from the stored presynaptic neuron.
+    /// Signed, distance-attenuated signal amplitude of a synapse, deriving the
+    /// sign exclusively from the stored presynaptic neuron.
     pub fn synaptic_amplitude(
         &self,
         synapse_id: SynapseId,
         decay_length: f32,
-    ) -> Result<f32, NetworkError> {
+    ) -> Result<SignalStrength, NetworkError> {
         let synapse = self
             .synapse(synapse_id)
             .ok_or(NetworkError::MissingSynapse(synapse_id))?;
@@ -322,7 +323,7 @@ impl Network {
             .ok_or(NetworkError::MissingPresynapticNeuron(synapse.pre()))?;
         let attenuation = self.synaptic_attenuation(synapse_id, decay_length)?;
         synapse
-            .effective_weight(pre.polarity(), attenuation)
+            .effective_amplitude(pre.polarity(), attenuation)
             .map_err(NetworkError::InvalidSynapse)
     }
 
@@ -393,12 +394,12 @@ impl Network {
             return Err(NetworkError::NeuronConfigMismatch(neuron.id()));
         }
         if let Some(synapse) = self.synapses().find(|synapse| {
-            synapse.weight() < network_config.min_weight
-                || synapse.weight() > network_config.max_weight
+            synapse.weight().get() < network_config.min_weight
+                || synapse.weight().get() > network_config.max_weight
         }) {
             return Err(NetworkError::WeightOutOfConfiguredBounds {
                 synapse_id: synapse.id(),
-                weight: synapse.weight(),
+                weight: synapse.weight().get(),
                 min: network_config.min_weight,
                 max: network_config.max_weight,
             });
@@ -542,7 +543,7 @@ impl Error for NetworkError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::NeuronConfig, math::Position3D};
+    use crate::{config::NeuronConfig, math::Position3D, primitives::Weight};
 
     use super::*;
     use crate::core::{NeuronRole, Polarity, SimTime};
@@ -560,8 +561,15 @@ mod tests {
     }
 
     fn synapse(id: u64, pre: u64, post: u64) -> Synapse {
-        Synapse::new(SynapseId(id), NeuronId(pre), NeuronId(post), 0.5, 10, true)
-            .expect("valid test synapse")
+        Synapse::new(
+            SynapseId(id),
+            NeuronId(pre),
+            NeuronId(post),
+            Weight::new(0.5).unwrap(),
+            10,
+            true,
+        )
+        .expect("valid test synapse")
     }
 
     #[test]
@@ -662,7 +670,7 @@ mod tests {
             .unwrap();
         network.add_synapse(synapse(1, 1, 2)).unwrap();
 
-        let amplitude = network.synaptic_amplitude(SynapseId(1), 1.0).unwrap();
+        let amplitude = network.synaptic_amplitude(SynapseId(1), 1.0).unwrap().get();
         let expected = -0.5 / std::f32::consts::E;
         assert!((amplitude - expected).abs() <= 1.0e-6);
         assert!(matches!(
@@ -687,7 +695,7 @@ mod tests {
             .for_each_incoming_synapse_mut(NeuronId(3), |synapse| {
                 visited.push(synapse.id());
                 synapse
-                    .set_weight(synapse.weight() + 0.1)
+                    .set_weight(Weight::new(synapse.weight().get() + 0.1).unwrap())
                     .expect("positive finite weight");
             })
             .unwrap();
