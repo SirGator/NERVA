@@ -36,7 +36,7 @@ Optional Cargo features expose additional library modules:
 
 - `diagnostics`: read-only event inspection, snapshots, and metrics
 - `visualization`: CSV and JSON exports
-- `development`: the reserved post-M0 boundary; growth is not implemented yet
+- `development`: local structural-drive, candidate search, and M1.3 synapse formation
 
 The default build uses no external crate dependencies. The public API is in
 early development and may change between releases.
@@ -47,8 +47,8 @@ early development and may change between releases.
 - `core`: neurons, synapses, spikes, and deterministic graph state
 - `learning`: local Pair-STDP and per-neuron homeostasis
 - `runtime`: deterministic timestamp batches and spike propagation
-- `roots`, `transduction`, and `nerves`: fixed external connections
-- `environment` and `experiment`: reproducible M0 orchestration
+- `io`, `roots`, `transduction`, and `nerves`: device-neutral external connections
+- `experiment`, including `experiment::m0`: reproducible reference orchestration
 - feature-gated `metrics`, `debug`, `visualization`, and post-M0 `development`
 
 Every neuron can additionally carry a continuous intrinsic capability vector:
@@ -61,6 +61,27 @@ Sensory and motor neuron populations live inside the same `core::Network`, so
 their synapses can use the same local learning rules as the internal network.
 Only the physical root/transduction/nerve attachment remains a fixed boundary;
 future structural formation and pruning belongs to `development`.
+
+External adapters implement `io::Receptor` or `io::Effector` and exchange
+timestamped values through `ChannelId`. Sensory input follows
+`Receptor → SensoryTransducer → SensoryRoot → Fiber → sensory neuron`;
+motor spikes follow `motor neuron → Fiber → MotorRoot → MotorTransducer → Effector`.
+Only `nerves::Mapping` associates physical channels with neuron IDs.
+
+Both transducer traits queue input with `push` and append output with
+`advance_until(until, &mut output)`. A horizon includes its timestamp and closes
+that interval: queue every input through `until` before advancing, and keep
+later inputs for later horizons. Repeated horizons produce no duplicate output;
+backwards horizons and inputs in completed intervals return `TransductionError`.
+Advancing without new input also gives continuous encodings a time span for
+rate generation or decay, without introducing a global tick.
+
+`DirectSensoryTransducer` maps each finite, positive receptor value to one
+equal-amplitude spike; `DirectMotorTransducer` maps each finite, positive motor
+amplitude to one equal-value pulse. Both preserve channels and timestamps.
+M0-specific patterns, bits, encoders, and decoders live in `experiment::m0`.
+The [I/O integration test](tests/io_contract.rs) exercises the entire path
+through the public transducer traits and actual neural dynamics.
 
 The typed scalar primitives (`Potential`, `Threshold`, `Weight`,
 `SignalStrength`, and related domains) support a gradual migration. The

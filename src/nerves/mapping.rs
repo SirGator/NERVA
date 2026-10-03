@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::{core::NeuronId, roots::RootId};
+use crate::{core::NeuronId, io::ChannelId, roots::RootId};
 
 use super::{Fiber, FiberDirection, FiberId};
 
@@ -15,8 +15,8 @@ pub enum MappingError {
     DuplicateChannel {
         /// Root containing the duplicate channel.
         root: RootId,
-        /// Duplicate channel number.
-        channel: u16,
+        /// Duplicate channel identity.
+        channel: ChannelId,
     },
     /// The requested fiber does not exist.
     UnknownFiber(FiberId),
@@ -28,8 +28,8 @@ pub enum MappingError {
 #[derive(Clone, Debug, Default)]
 pub struct Mapping {
     fibers: HashMap<FiberId, Fiber>,
-    sensory_channels: HashMap<(RootId, u16), FiberId>,
-    motor_channels: HashMap<NeuronId, Vec<(RootId, u16, FiberId)>>,
+    sensory_channels: HashMap<(RootId, ChannelId), FiberId>,
+    motor_channels: HashMap<NeuronId, Vec<(RootId, ChannelId, FiberId)>>,
 }
 
 impl Mapping {
@@ -51,7 +51,7 @@ impl Mapping {
     pub fn map_sensory(
         &mut self,
         root: RootId,
-        channel: u16,
+        channel: ChannelId,
         fiber: FiberId,
     ) -> Result<(), MappingError> {
         let registered = self
@@ -72,7 +72,7 @@ impl Mapping {
     pub fn map_motor(
         &mut self,
         root: RootId,
-        channel: u16,
+        channel: ChannelId,
         fiber: FiberId,
     ) -> Result<(), MappingError> {
         let registered = self
@@ -94,14 +94,17 @@ impl Mapping {
     }
 
     /// Resolves a sensory root channel.
-    pub fn sensory_fiber(&self, root: RootId, channel: u16) -> Option<&Fiber> {
+    pub fn sensory_fiber(&self, root: RootId, channel: ChannelId) -> Option<&Fiber> {
         self.sensory_channels
             .get(&(root, channel))
             .and_then(|id| self.fibers.get(id))
     }
 
     /// Resolves all motor outputs of one neuron.
-    pub fn motor_fibers(&self, neuron: NeuronId) -> impl Iterator<Item = (RootId, u16, &Fiber)> {
+    pub fn motor_fibers(
+        &self,
+        neuron: NeuronId,
+    ) -> impl Iterator<Item = (RootId, ChannelId, &Fiber)> {
         self.motor_channels
             .get(&neuron)
             .into_iter()

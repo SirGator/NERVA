@@ -41,8 +41,9 @@ pub struct HomeostaticChange {
 ///
 /// A neuron with adequate input but too little output becomes intrinsically
 /// more excitable. A neuron with too little input raises structural drive
-/// instead, allowing a later growth/pruning slice to search locally without
-/// mistaking missing connectivity for missing excitability.
+/// instead, allowing a later development slice to search locally for new
+/// incoming connections without mistaking missing connectivity for missing
+/// excitability.
 #[derive(Clone, Debug)]
 pub struct LocalHomeostasis {
     enabled: bool,

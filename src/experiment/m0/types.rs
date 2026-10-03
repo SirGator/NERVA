@@ -1,4 +1,4 @@
-//! Neutral values crossing the environment/transduction boundary.
+//! M0-specific neutral values crossing the environment/transduction boundary.
 
 use crate::primitives::SimTime;
 
@@ -15,7 +15,7 @@ pub enum Pattern {
     D,
 }
 
-/// One timestamped value offered by an environment.
+/// One timestamped value offered by an M0 environment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Observation {
     /// A symbolic M0 pattern.

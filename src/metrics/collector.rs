@@ -2,7 +2,7 @@
 
 use crate::{
     core::{Network, Spike},
-    environment::Pattern,
+    experiment::m0::Pattern,
     runtime::ObservationEvent,
 };
 

@@ -1,6 +1,6 @@
 //! Passive, observable motor root.
 
-use crate::core::SimTime;
+use crate::{core::SimTime, io::ChannelId};
 
 use super::{Root, RootChannel, RootDirection, RootId};
 
@@ -8,7 +8,7 @@ use super::{Root, RootChannel, RootDirection, RootId};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotorOutput {
     /// Channel that received the spike.
-    pub channel: u16,
+    pub channel: ChannelId,
     /// Arrival time after nerve conduction.
     pub at: SimTime,
     /// Transported amplitude.

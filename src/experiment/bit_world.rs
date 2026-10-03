@@ -4,13 +4,15 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
     core::{SimTime, Spike},
-    environment::{Environment, Observation},
+    experiment::m0::{Environment, Observation},
+    io::ChannelId,
     learning::PlasticityRule,
     nerves::{FiberImpulse, Mapping, Routing, RoutingError},
     roots::{MotorOutput, MotorRoot, RootId},
     runtime::{ObservationEvent, RunReport, Simulation, SimulationError},
-    transduction::{Decoder, Encoder, EncodingError},
 };
+
+use crate::experiment::m0::{Decoder, Encoder, EncodingError};
 
 /// Counts and runtime progress produced by one closed-loop boundary cycle.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -45,7 +47,7 @@ pub enum ClosedLoopError {
         /// Sensory root used by this adapter.
         root: RootId,
         /// Channel emitted by the encoder.
-        channel: u16,
+        channel: ChannelId,
     },
     /// The supplied mapping routes a motor spike to a root not owned by this
     /// single-root adapter.
@@ -60,7 +62,7 @@ pub enum ClosedLoopError {
         /// Motor root receiving the impulse.
         root: RootId,
         /// Mapped root-local channel.
-        channel: u16,
+        channel: ChannelId,
         /// Mapped fixed fiber.
         fiber: crate::nerves::FiberId,
     },
@@ -603,12 +605,11 @@ mod tests {
     use crate::{
         config::{NeuronConfig, RuntimeConfig},
         core::{Network, Neuron, NeuronId, Polarity},
-        environment::{Action, BitWorld},
+        experiment::m0::{Action, BitDecoder, BitEncoder, BitWorld},
         learning::NoPlasticity,
         math::Position3D,
         nerves::{Fiber, FiberDirection, FiberId},
         roots::RootChannel,
-        transduction::{BitDecoder, BitEncoder},
     };
 
     use super::*;
@@ -695,7 +696,7 @@ mod tests {
         let sensory_root = RootId(1);
         let motor_root_id = RootId(2);
         let mut mapping = Mapping::new();
-        for (id, channel) in [(10, 0), (11, 1)] {
+        for (id, channel) in [(10, ChannelId(0)), (11, ChannelId(1))] {
             mapping
                 .add_fiber(
                     Fiber::new(FiberId(id), FiberDirection::Sensory, NeuronId(1), 1, 1.0).unwrap(),
@@ -708,13 +709,15 @@ mod tests {
         mapping
             .add_fiber(Fiber::new(FiberId(20), FiberDirection::Motor, NeuronId(1), 1, 1.0).unwrap())
             .unwrap();
-        mapping.map_motor(motor_root_id, 1, FiberId(20)).unwrap();
+        mapping
+            .map_motor(motor_root_id, ChannelId(1), FiberId(20))
+            .unwrap();
 
         let motor_root = MotorRoot::new(
             motor_root_id,
             "bit actuator",
             vec![RootChannel {
-                channel: 1,
+                channel: ChannelId(1),
                 fiber: FiberId(20),
             }],
         )
@@ -823,7 +826,7 @@ mod tests {
             isolated.cycle_until(SimTime::ZERO),
             Err(ClosedLoopError::UnmappedSensoryChannel {
                 root: RootId(1),
-                channel: 0,
+                channel: ChannelId(0),
             })
         );
     }
@@ -838,16 +841,20 @@ mod tests {
                 Fiber::new(FiberId(10), FiberDirection::Sensory, NeuronId(1), 1, 1.0).unwrap(),
             )
             .unwrap();
-        mapping.map_sensory(sensory_root, 0, FiberId(10)).unwrap();
+        mapping
+            .map_sensory(sensory_root, ChannelId(0), FiberId(10))
+            .unwrap();
         mapping
             .add_fiber(Fiber::new(FiberId(20), FiberDirection::Motor, NeuronId(1), 1, 1.0).unwrap())
             .unwrap();
-        mapping.map_motor(motor_root_id, 1, FiberId(20)).unwrap();
+        mapping
+            .map_motor(motor_root_id, ChannelId(1), FiberId(20))
+            .unwrap();
         let motor_root = MotorRoot::new(
             motor_root_id,
             "mismatched actuator",
             vec![RootChannel {
-                channel: 0,
+                channel: ChannelId(0),
                 fiber: FiberId(20),
             }],
         )
@@ -867,7 +874,7 @@ mod tests {
             loop_with_mismatch.cycle_until(SimTime(1)),
             Err(ClosedLoopError::UnexpectedMotorChannel {
                 root: motor_root_id,
-                channel: 1,
+                channel: ChannelId(1),
                 fiber: FiberId(20),
             })
         );

@@ -56,10 +56,10 @@
 pub mod config;
 /// Neurons, synapses, spikes, IDs and sparse graph state.
 pub mod core;
-/// Neutral environment interfaces and deterministic test worlds.
-pub mod environment;
 /// Reproducible experiment assembly and M0 comparisons.
 pub mod experiment;
+/// Device-neutral receptor, effector, and channel primitives.
+pub mod io;
 /// Local synaptic and cellular plasticity rules.
 pub mod learning;
 /// Pure position, distance and decay helpers.

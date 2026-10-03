@@ -37,6 +37,41 @@ pub struct Synapse {
     pub(crate) pre_trace_updated_at: Option<SimTime>,
     /// Number of arrivals recorded for local diagnostics/statistics.
     pub(crate) transmission_count: u64,
+    /// Synapse-local **utility eligibility trace** `e_ij`.
+    ///
+    /// This is structurally parallel to [`Self::pre_trace`] but is owned by
+    /// the structural-utility pathway, not by STDP. It is incremented on every
+    /// presynaptic arrival through [`Self::record_utility_arrival`] and decays
+    /// exponentially toward zero with time constant `τ_e`:
+    ///
+    /// `e_ij(t) = e_ij(t_0) · exp(-(t − t_0) / τ_e)`
+    ///
+    /// The decay is applied lazily inside [`Self::record_utility_arrival`] and
+    /// [`Self::advance_utility_eligibility_to`], and can be observed without
+    /// mutation via [`Self::utility_eligibility_at`]. Keeping this trace
+    /// separate from [`Self::pre_trace`] ensures structural utility does not
+    /// depend on whether a concrete STDP rule happens to update `pre_trace`.
+    pub(crate) utility_eligibility: f32,
+    /// Timestamp to which [`Self::utility_eligibility`] has been decayed.
+    pub(crate) utility_eligibility_updated_at: Option<SimTime>,
+    /// Synapse-local smoothed utility estimate used by structural pruning.
+    ///
+    /// This is an exponential moving average of recent per-arrival utility
+    /// samples that additionally **decays toward zero** between updates with
+    /// time constant `τ_U`:
+    ///
+    /// `U(t)  = U(t₀) · exp(-(t − t₀) / τ_U)`           (memory decay)
+    /// `U'(t) = (1 − η) · U(t) + η · u_ij`               (EMA on decayed value)
+    ///
+    /// The decay is applied lazily inside [`Self::update_utility`] and can be
+    /// observed without mutation via [`Self::utility_at`]. When `U` stays
+    /// below `pruning_threshold` for long enough, the pruning slice may remove
+    /// this connection. Defaults to zero so a new or never-useful synapse is
+    /// immediately eligible for pruning if no positive utility is ever
+    /// recorded.
+    pub(crate) utility: f32,
+    /// Timestamp of the last [`Self::update_utility`] call.
+    pub(crate) utility_updated_at: Option<SimTime>,
 }
 
 impl Synapse {
@@ -63,6 +98,10 @@ impl Synapse {
             pre_trace: 0.0,
             pre_trace_updated_at: None,
             transmission_count: 0,
+            utility_eligibility: 0.0,
+            utility_eligibility_updated_at: None,
+            utility: 0.0,
+            utility_updated_at: None,
         })
     }
 
@@ -122,6 +161,11 @@ impl Synapse {
         validate_delay(self.delay_us)?;
         if !self.pre_trace.is_finite() || self.pre_trace < 0.0 {
             return Err(SynapseError::InvalidPreTrace(self.pre_trace));
+        }
+        if !self.utility_eligibility.is_finite() || self.utility_eligibility < 0.0 {
+            return Err(SynapseError::InvalidUtilityEligibility(
+                self.utility_eligibility,
+            ));
         }
         Ok(())
     }
@@ -227,6 +271,162 @@ impl Synapse {
     pub fn record_transmission(&mut self) {
         self.transmission_count = self.transmission_count.saturating_add(1);
     }
+
+    /// Current synapse-local utility eligibility trace `e_ij`.
+    pub const fn utility_eligibility(&self) -> f32 {
+        self.utility_eligibility
+    }
+
+    /// Timestamp to which the utility eligibility trace has been decayed.
+    pub const fn utility_eligibility_updated_at(&self) -> Option<SimTime> {
+        self.utility_eligibility_updated_at
+    }
+
+    /// Decays the utility eligibility trace to an exact time without
+    /// incrementing it.
+    ///
+    /// `e_ij(t) = e_ij(t_0) · exp(-(t − t_0) / τ_e)`
+    ///
+    /// `tau_e` is the eligibility time constant in microseconds and must be
+    /// strictly positive and finite.
+    pub fn advance_utility_eligibility_to(
+        &mut self,
+        time: SimTime,
+        tau_e: f32,
+    ) -> Result<(), SynapseError> {
+        if !tau_e.is_finite() || tau_e <= 0.0 {
+            return Err(SynapseError::InvalidEligibilityTimeConstant(tau_e));
+        }
+        if let Some(last_update) = self.utility_eligibility_updated_at {
+            let elapsed_us = time.duration_since(last_update).ok_or(
+                SynapseError::EligibilityTimeWentBackwards {
+                    current: last_update,
+                    requested: time,
+                },
+            )?;
+            self.utility_eligibility = decay_to_zero(self.utility_eligibility, elapsed_us, tau_e);
+        }
+        self.utility_eligibility_updated_at = Some(time);
+        Ok(())
+    }
+
+    /// Decays then increments the utility eligibility trace for one arrival.
+    ///
+    /// This is the structural-utility analogue of [`Self::record_pre_arrival`]
+    /// and is intentionally independent of STDP: it is called by the runtime
+    /// on every presynaptic arrival through a plastic connection, regardless
+    /// of whether a concrete `PlasticityRule` updates `pre_trace`.
+    pub fn record_utility_arrival(
+        &mut self,
+        time: SimTime,
+        tau_e: f32,
+    ) -> Result<(), SynapseError> {
+        self.advance_utility_eligibility_to(time, tau_e)?;
+        self.utility_eligibility += 1.0;
+        Ok(())
+    }
+
+    /// Projected utility eligibility at `now` under exponential decay, without
+    /// mutation.
+    ///
+    /// Analogous to [`Self::utility_at`]. If the trace has never been updated,
+    /// the projected value is zero.
+    pub fn utility_eligibility_at(&self, now: SimTime, tau_e: f32) -> Result<f32, SynapseError> {
+        if !tau_e.is_finite() || tau_e <= 0.0 {
+            return Err(SynapseError::InvalidEligibilityTimeConstant(tau_e));
+        }
+        let Some(last_update) = self.utility_eligibility_updated_at else {
+            return Ok(0.0);
+        };
+        let elapsed_us =
+            now.duration_since(last_update)
+                .ok_or(SynapseError::EligibilityTimeWentBackwards {
+                    current: last_update,
+                    requested: now,
+                })?;
+        Ok(decay_to_zero(self.utility_eligibility, elapsed_us, tau_e))
+    }
+
+    /// Current synapse-local smoothed utility estimate.
+    pub const fn utility(&self) -> f32 {
+        self.utility
+    }
+
+    /// Timestamp of the last utility update, if any.
+    pub const fn utility_updated_at(&self) -> Option<SimTime> {
+        self.utility_updated_at
+    }
+
+    /// Projected utility at `now` under exponential decay, without mutation.
+    ///
+    /// `U(t) = U(t₀) · exp(-(t − t₀) / τ_U)`
+    ///
+    /// If the synapse has never been updated, the projected utility is zero.
+    /// `tau_u` is the utility memory time constant in microseconds; it must be
+    /// strictly positive and finite. This is the read side of the
+    /// event-driven utility memory: callers (in particular the
+    /// `PruningController`) observe the decayed value without forcing an
+    /// update, preserving NERVA's no-global-tick design.
+    pub fn utility_at(&self, now: SimTime, tau_u: f32) -> Result<f32, SynapseError> {
+        if !tau_u.is_finite() || tau_u <= 0.0 {
+            return Err(SynapseError::InvalidUtilityTimeConstant(tau_u));
+        }
+        let Some(last_update) = self.utility_updated_at else {
+            return Ok(0.0);
+        };
+        let elapsed_us =
+            now.duration_since(last_update)
+                .ok_or(SynapseError::UtilityTimeWentBackwards {
+                    current: last_update,
+                    requested: now,
+                })?;
+        Ok(decay_to_zero(self.utility, elapsed_us, tau_u))
+    }
+
+    /// Decays then exponentially smooths the synapse-local utility estimate.
+    ///
+    /// `U(t)  = U(t₀) · exp(-(t − t₀) / τ_U)`           (memory decay)
+    /// `U'(t) = (1 − η) · U(t) + η · sample`             (EMA on decayed value)
+    ///
+    /// The smoothing factor `eta` is clamped to `[0, 1]`. A synapse with no
+    /// prior update initializes `U` to the sample directly, bypassing the
+    /// decay step. `tau_u` is the utility memory time constant in microseconds
+    /// and must be strictly positive and finite. This is a purely local
+    /// quantity: no global population statistic is involved.
+    pub fn update_utility(
+        &mut self,
+        sample: f32,
+        eta: f32,
+        time: SimTime,
+        tau_u: f32,
+    ) -> Result<f32, SynapseError> {
+        if !sample.is_finite() {
+            return Err(SynapseError::NonFiniteUtility(sample));
+        }
+        if !eta.is_finite() || !(0.0..=1.0).contains(&eta) {
+            return Err(SynapseError::InvalidEta(eta));
+        }
+        if !tau_u.is_finite() || tau_u <= 0.0 {
+            return Err(SynapseError::InvalidUtilityTimeConstant(tau_u));
+        }
+        if let Some(prev_time) = self.utility_updated_at
+            && time < prev_time
+        {
+            return Err(SynapseError::UtilityTimeWentBackwards {
+                current: prev_time,
+                requested: time,
+            });
+        }
+        let new_utility = if self.utility_updated_at.is_none() {
+            sample
+        } else {
+            let decayed = self.utility_at(time, tau_u)?;
+            (1.0 - eta) * decayed + eta * sample
+        };
+        self.utility = new_utility;
+        self.utility_updated_at = Some(time);
+        Ok(new_utility)
+    }
 }
 
 fn validate_weight(weight: Weight) -> Result<(), SynapseError> {
@@ -276,6 +476,30 @@ pub enum SynapseError {
         /// Earlier requested timestamp.
         requested: SimTime,
     },
+    /// A utility sample was NaN or infinite.
+    NonFiniteUtility(f32),
+    /// The utility smoothing factor was outside `[0, 1]`.
+    InvalidEta(f32),
+    /// The utility memory time constant was non-finite or non-positive.
+    InvalidUtilityTimeConstant(f32),
+    /// The utility eligibility time constant was non-finite or non-positive.
+    InvalidEligibilityTimeConstant(f32),
+    /// The utility eligibility trace was non-finite or negative.
+    InvalidUtilityEligibility(f32),
+    /// A utility eligibility decay was requested before its last update.
+    EligibilityTimeWentBackwards {
+        /// Current eligibility timestamp.
+        current: SimTime,
+        /// Earlier requested timestamp.
+        requested: SimTime,
+    },
+    /// A utility update was requested before its last update.
+    UtilityTimeWentBackwards {
+        /// Current utility timestamp.
+        current: SimTime,
+        /// Earlier requested timestamp.
+        requested: SimTime,
+    },
 }
 
 impl fmt::Display for SynapseError {
@@ -316,6 +540,41 @@ impl fmt::Display for SynapseError {
             Self::TraceTimeWentBackwards { current, requested } => write!(
                 formatter,
                 "cannot decay synapse trace from {current} backwards to {requested}"
+            ),
+            Self::NonFiniteUtility(value) => {
+                write!(formatter, "utility sample must be finite, got {value}")
+            }
+            Self::InvalidEta(value) => {
+                write!(
+                    formatter,
+                    "utility smoothing factor must be in [0, 1], got {value}"
+                )
+            }
+            Self::InvalidUtilityTimeConstant(value) => {
+                write!(
+                    formatter,
+                    "utility memory time constant must be positive, got {value}"
+                )
+            }
+            Self::InvalidEligibilityTimeConstant(value) => {
+                write!(
+                    formatter,
+                    "utility eligibility time constant must be positive, got {value}"
+                )
+            }
+            Self::InvalidUtilityEligibility(value) => {
+                write!(
+                    formatter,
+                    "utility eligibility trace must be finite and non-negative, got {value}"
+                )
+            }
+            Self::EligibilityTimeWentBackwards { current, requested } => write!(
+                formatter,
+                "cannot decay utility eligibility from {current} backwards to {requested}"
+            ),
+            Self::UtilityTimeWentBackwards { current, requested } => write!(
+                formatter,
+                "cannot update utility from {current} backwards to {requested}"
             ),
         }
     }
@@ -461,5 +720,253 @@ mod tests {
             ),
             Err(SynapseError::ZeroDelay)
         );
+    }
+
+    #[test]
+    fn utility_at_decays_exponentially_without_mutation() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        // Seed the utility memory at t0 = 0 with U = 0.8.
+        synapse
+            .update_utility(0.8, 1.0, SimTime::ZERO, 1_000_000.0)
+            .expect("seed utility");
+        let stored = synapse.utility();
+        assert!((stored - 0.8).abs() <= 1.0e-6);
+
+        // Read the decayed value at one time constant later.
+        let projected = synapse
+            .utility_at(SimTime(1_000_000), 1_000_000.0)
+            .expect("decayed read");
+        let expected = 0.8 / std::f32::consts::E;
+        assert!(
+            (projected - expected).abs() <= 1.0e-5,
+            "projected {projected} should be ~{expected}"
+        );
+
+        // The stored value must be unchanged: utility_at does not mutate.
+        assert!(
+            (synapse.utility() - stored).abs() <= 1.0e-7,
+            "utility_at must not mutate stored utility"
+        );
+        assert_eq!(synapse.utility_updated_at(), Some(SimTime::ZERO));
+    }
+
+    #[test]
+    fn utility_at_returns_zero_for_never_updated_synapse() {
+        let synapse = synapse(0.5).expect("valid synapse");
+        assert_eq!(
+            synapse.utility_at(SimTime(123), 1_000_000.0).unwrap(),
+            0.0,
+            "never-updated synapse projects zero utility"
+        );
+        assert_eq!(synapse.utility_updated_at(), None);
+    }
+
+    #[test]
+    fn utility_at_rejects_non_positive_tau() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        synapse
+            .update_utility(0.5, 1.0, SimTime::ZERO, 1_000_000.0)
+            .unwrap();
+        assert!(matches!(
+            synapse.utility_at(SimTime(1), 0.0),
+            Err(SynapseError::InvalidUtilityTimeConstant(0.0))
+        ));
+        assert!(matches!(
+            synapse.utility_at(SimTime(1), f32::NAN),
+            Err(SynapseError::InvalidUtilityTimeConstant(_))
+        ));
+    }
+
+    #[test]
+    fn utility_at_rejects_time_going_backwards() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        synapse
+            .update_utility(0.5, 1.0, SimTime(100), 1_000_000.0)
+            .unwrap();
+        assert!(matches!(
+            synapse.utility_at(SimTime(50), 1_000_000.0),
+            Err(SynapseError::UtilityTimeWentBackwards { .. })
+        ));
+    }
+
+    #[test]
+    fn update_utility_decays_then_smooths_on_existing_memory() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        // Seed U = 1.0 at t = 0.
+        synapse
+            .update_utility(1.0, 1.0, SimTime::ZERO, 1_000_000.0)
+            .unwrap();
+        // After one full time constant, decayed U = 1/e ≈ 0.3679.
+        // With eta = 0.5 and sample = 0.0:
+        // U' = 0.5 * (1/e) + 0.5 * 0 = 0.5/e ≈ 0.1839.
+        let new_u = synapse
+            .update_utility(0.0, 0.5, SimTime(1_000_000), 1_000_000.0)
+            .expect("decay-then-EMA");
+        let expected = 0.5 / std::f32::consts::E;
+        assert!(
+            (new_u - expected).abs() <= 1.0e-5,
+            "new utility {new_u} should be ~{expected}"
+        );
+        assert_eq!(synapse.utility_updated_at(), Some(SimTime(1_000_000)));
+    }
+
+    #[test]
+    fn update_utility_first_call_seeds_utility_directly_without_decay() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        let new_u = synapse
+            .update_utility(0.7, 0.3, SimTime(42), 1_000_000.0)
+            .expect("seed");
+        assert!(
+            (new_u - 0.7).abs() <= 1.0e-7,
+            "first update should seed directly, got {new_u}"
+        );
+        assert_eq!(synapse.utility(), 0.7);
+        assert_eq!(synapse.utility_updated_at(), Some(SimTime(42)));
+    }
+
+    #[test]
+    fn update_utility_rejects_invalid_tau_and_sample_and_eta() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        synapse
+            .update_utility(0.5, 1.0, SimTime(10), 1_000_000.0)
+            .unwrap();
+        assert!(matches!(
+            synapse.update_utility(0.5, 0.5, SimTime(11), 0.0),
+            Err(SynapseError::InvalidUtilityTimeConstant(0.0))
+        ));
+        assert!(matches!(
+            synapse.update_utility(f32::NAN, 0.5, SimTime(11), 1_000_000.0),
+            Err(SynapseError::NonFiniteUtility(_))
+        ));
+        assert!(matches!(
+            synapse.update_utility(0.5, 1.5, SimTime(11), 1_000_000.0),
+            Err(SynapseError::InvalidEta(1.5))
+        ));
+        assert!(matches!(
+            synapse.update_utility(0.5, 0.5, SimTime(5), 1_000_000.0),
+            Err(SynapseError::UtilityTimeWentBackwards { .. })
+        ));
+    }
+
+    #[test]
+    fn utility_memory_decays_to_near_zero_over_many_time_constants() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        synapse
+            .update_utility(1.0, 1.0, SimTime::ZERO, 1_000_000.0)
+            .unwrap();
+        // After 10 time constants, decay factor is e^-10 ≈ 4.5e-5.
+        let projected = synapse
+            .utility_at(SimTime(10_000_000), 1_000_000.0)
+            .unwrap();
+        assert!(
+            projected < 1.0e-3,
+            "decayed utility should be near zero, got {projected}"
+        );
+        assert!(projected > 0.0, "decayed utility should still be positive");
+    }
+
+    #[test]
+    fn utility_eligibility_starts_at_zero_and_increments_on_arrival() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        assert_eq!(synapse.utility_eligibility(), 0.0);
+        assert_eq!(synapse.utility_eligibility_updated_at(), None);
+
+        synapse
+            .record_utility_arrival(SimTime::ZERO, 100_000.0)
+            .unwrap();
+        assert!((synapse.utility_eligibility() - 1.0).abs() <= 1.0e-6);
+        assert_eq!(
+            synapse.utility_eligibility_updated_at(),
+            Some(SimTime::ZERO)
+        );
+    }
+
+    #[test]
+    fn utility_eligibility_decays_between_arrivals() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        synapse
+            .record_utility_arrival(SimTime(0), 100_000.0)
+            .unwrap();
+        // One time constant later: e ≈ 1/e.
+        let projected = synapse
+            .utility_eligibility_at(SimTime(100_000), 100_000.0)
+            .unwrap();
+        let expected = 1.0 / std::f32::consts::E;
+        assert!(
+            (projected - expected).abs() <= 1.0e-5,
+            "projected {projected} should be ~{expected}"
+        );
+        // Second arrival at t=100_000: 1/e + 1.
+        synapse
+            .record_utility_arrival(SimTime(100_000), 100_000.0)
+            .unwrap();
+        let expected_after = 1.0 + 1.0 / std::f32::consts::E;
+        assert!(
+            (synapse.utility_eligibility() - expected_after).abs() <= 1.0e-5,
+            "after second arrival {projected} should be ~{expected_after}"
+        );
+    }
+
+    #[test]
+    fn utility_eligibility_is_independent_of_pre_trace() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        // Record a utility arrival without touching pre_trace.
+        synapse
+            .record_utility_arrival(SimTime::ZERO, 100_000.0)
+            .unwrap();
+        assert_eq!(
+            synapse.pre_trace(),
+            0.0,
+            "utility arrival must not touch pre_trace"
+        );
+        assert_eq!(synapse.pre_trace_updated_at(), None);
+        assert!((synapse.utility_eligibility() - 1.0).abs() <= 1.0e-6);
+
+        // Now record a pre arrival: utility eligibility must not jump.
+        synapse.record_pre_arrival(SimTime(10), 100_000.0).unwrap();
+        assert!((synapse.pre_trace() - 1.0).abs() <= 1.0e-6);
+        // The stored utility_eligibility is unchanged because record_pre_arrival
+        // does not touch it. The projected value at t=10 reflects only decay.
+        let projected = synapse
+            .utility_eligibility_at(SimTime(10), 100_000.0)
+            .unwrap();
+        let expected = (-(10.0_f32 / 100_000.0_f32)).exp();
+        assert!(
+            (projected - expected).abs() <= 1.0e-5,
+            "pre arrival must not increment utility eligibility, projected {projected} expected ~{expected}"
+        );
+        // And pre_trace must not have been touched by utility arrival.
+        assert!((synapse.pre_trace() - 1.0).abs() <= 1.0e-6);
+    }
+
+    #[test]
+    fn utility_eligibility_at_returns_zero_for_never_updated_synapse() {
+        let synapse = synapse(0.5).expect("valid synapse");
+        assert_eq!(
+            synapse
+                .utility_eligibility_at(SimTime(123), 100_000.0)
+                .unwrap(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn utility_eligibility_rejects_invalid_tau_and_backwards_time() {
+        let mut synapse = synapse(0.5).expect("valid synapse");
+        synapse
+            .record_utility_arrival(SimTime(100), 100_000.0)
+            .unwrap();
+        assert!(matches!(
+            synapse.advance_utility_eligibility_to(SimTime(101), 0.0),
+            Err(SynapseError::InvalidEligibilityTimeConstant(0.0))
+        ));
+        assert!(matches!(
+            synapse.utility_eligibility_at(SimTime(101), f32::NAN),
+            Err(SynapseError::InvalidEligibilityTimeConstant(_))
+        ));
+        assert!(matches!(
+            synapse.advance_utility_eligibility_to(SimTime(50), 100_000.0),
+            Err(SynapseError::EligibilityTimeWentBackwards { .. })
+        ));
     }
 }

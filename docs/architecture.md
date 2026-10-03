@@ -1,6 +1,6 @@
 # Aktive Architektur und Konsolidierungsentscheidungen
 
-**Stand:** 20. August 2026
+**Stand:** 3. Oktober 2026
 
 Dieses Dokument beschreibt die tatsächlich über `src/lib.rs` kompilierte
 Architektur. Die ausführliche M0-Logik und die experimentellen Kriterien stehen
@@ -22,13 +22,19 @@ mit zwei verbundenen Neuronen.
 ## Aktiver Datenpfad
 
 ```text
-environment
-    ↕
-roots + transduction + nerves
+Außenwelt
+    ↓ Receptor / ReceptorSignal
+SensoryTransducer
+    ↓ ChannelSpike
+SensoryRoot → Nerve / Fiber → sensorisches Neuron
     ↓
-runtime
-    ├── executes core network state
-    └── invokes local learning hooks
+runtime → core::Network + lokale learning-Hooks
+    ↓
+motorisches Neuron → Nerve / Fiber → MotorRoot
+    ↓ MotorOutput
+MotorTransducer
+    ↓ EffectorSignal / Effector
+Außenwelt
 ```
 
 `core` bleibt für M0 der stabile, produktive Zwischenstand. Eine spätere
@@ -44,8 +50,8 @@ Funktionen.
 | 2. Neuronale Bausteine | `core` | Neuronen, Synapsen, Spikes und deterministischer Netzwerkgraph |
 | 3. Lokale Veränderung | `learning`, optional `development` | lokale Plastizität beziehungsweise spätere Strukturentwicklung |
 | 4. Ausführung | `runtime` | deterministische Ereignisordnung, Batches, Propagation und Simulation |
-| 5. Schnittstellen | `roots`, `nerves`, `transduction` | feste Anschlussstellen, Transport und wertneutrale Übersetzung |
-| 6. Versuche und Beobachtung | `environment`, `experiment`, optional `metrics`, `debug`, `visualization` | Stimulation, Versuchssteuerung und ausschließlich lesende Inspektion |
+| 5. Schnittstellen | `io`, `roots`, `nerves`, `transduction` | geräteneutrale Werte, feste Anschlussstellen, Transport und Übersetzung |
+| 6. Versuche und Beobachtung | `experiment` mit `experiment::m0`, optional `metrics`, `debug`, `visualization` | Stimulation, Versuchssteuerung und ausschließlich lesende Inspektion |
 
 `learning` bezeichnet im aktuellen öffentlichen API-Pfad ausschließlich lokale
 Plastizität. Eine spätere Umbenennung in `plasticity` benötigt einen separaten
@@ -164,10 +170,55 @@ Ein zusätzliches allgemeines Domain-Event wird erst eingeführt, wenn ein
 konkreter, getesteter Übersetzungspfad zur Runtime existiert. Modulations- und
 Entwicklungsereignisse gehören dann ihren jeweiligen Fachmodulen.
 
-Die neutralen Grenztypen `Pattern`, `Observation` und `Action` werden von
-`transduction` definiert. `environment` verwendet und re-exportiert sie für die
-bisherige öffentliche API; dadurch hängt die Schnittstellenebene nicht mehr von
-der darüberliegenden Umgebungsebene ab.
+Die versuchsspezifischen Grenztypen `Pattern`, `Observation` und `Action` sowie
+deren Encoder, Decoder und Umgebungen liegen in `experiment::m0`; `experiment`
+stellt sie für die Referenzversuche weiter bereit. Die allgemeinen Module
+`io`, `roots`, `nerves` und `transduction` kennen keine M0-Typen. Ein rekursiver
+Architekturtest schützt diese Grenze.
+
+## Allgemeine I/O- und Transduktionsgrenze
+
+`io::Receptor` liefert zeitgestempelte `ReceptorSignal`-Werte; `io::Effector`
+nimmt `EffectorSignal`-Werte entgegen. Beide kennen nur `ChannelId`, Werte und
+`SimTime`, keine Neuron-IDs. `SensoryRoot` und `MotorRoot` kapseln die generische
+Root-Metadatenstruktur mit ihrer jeweiligen Richtung. Die feste physische
+Verbindung zwischen Kanal und Neuron gehört ausschließlich in `nerves::Mapping`.
+
+`SensoryTransducer` und `MotorTransducer` haben jeweils zwei Operationen:
+
+- `push` nimmt einen zeitgestempelten Eingang entgegen und puffert ihn.
+- `advance_until(until, &mut output)` verarbeitet Eingänge und verstrichene
+  Zeit bis einschließlich `until` und hängt Ausgaben an den übergebenen Puffer.
+
+Beide geben `Result<(), TransductionError>` zurück. Alle Eingänge bis zu einer
+Grenze müssen vor dem Advance-Aufruf vorliegen. Nach einem erfolgreichen
+Advance ist dieses inklusive Zeitintervall abgeschlossen: Eingänge bei oder
+vor der letzten Grenze werden abgelehnt. Zukünftige Eingänge dürfen in
+beliebiger Reihenfolge eintreffen; die Verarbeitung erfolgt chronologisch,
+bei gleichem Zeitstempel in Einfügereihenfolge. Rückwärts laufende Grenzen
+werden ohne Zustandsänderung abgelehnt. Ein wiederholter Advance auf dieselbe
+Grenze erzeugt keine weitere Ausgabe. Ausgabezeitpunkte liegen nie nach der
+angegebenen Grenze; spätere gepufferte Eingänge bleiben erhalten.
+
+Ein kontinuierlicher sensorischer Wert gilt ab seinem Zeitstempel bis zur
+nächsten Änderung. Auch ohne weitere Eingänge kann `advance_until` daraus
+zeitliche Aktivität erzeugen. Sensorische Spike-Zeitpunkte müssen bei gleicher
+Eingangshistorie unabhängig von der Aufteilung der Horizonte bleiben; für
+seed-basierte Encoder gilt das auch für den Zufallszustand. Motor-Decoder
+können bei neuen Horizonten ihren aktuellen, analytisch zerfallenden Wert
+ausgeben. Die Zwischenmessungen hängen dann von den gewählten Horizonten ab,
+der Zustand an gemeinsamen Grenzen muss bis auf numerische Genauigkeit
+übereinstimmen. Der Host steuert diese Grenzen ohne globalen Tick.
+
+`DirectSensoryTransducer` übersetzt einen endlichen, positiven Rezeptorwert
+in einen Spike gleicher Amplitude. `DirectMotorTransducer` übersetzt einen
+endlichen, positiven Motoroutput in einen Puls gleichen Werts. Kanal und
+Zeitstempel bleiben erhalten; ungültige Amplituden erzeugen einen Fehler und
+ändern den Zustand nicht. Die direkten Implementierungen erzeugen während
+Stille keine zusätzlichen Ereignisse. `tests/io_contract.rs` prüft diese
+beiden Implementierungen über Trait-Objekte im vollständigen neuronalen Pfad;
+`tests/transduction_time.rs` prüft Zeitgrenzen und demonstriert kontinuierliche
+Rate sowie Motorzerfall mit ausschließlich lokalen Test-Implementierungen.
 
 ## Kontinuierliche intrinsische Neuronendynamik
 

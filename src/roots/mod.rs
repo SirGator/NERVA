@@ -8,4 +8,4 @@ mod sensory;
 pub use motor::{MotorOutput, MotorRoot};
 pub use registry::{RootRegistry, RootRegistryError};
 pub use root::{Root, RootChannel, RootDirection, RootId};
-pub use sensory::PatternInputRoot;
+pub use sensory::SensoryRoot;

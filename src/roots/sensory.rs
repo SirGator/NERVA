@@ -1,14 +1,14 @@
-//! M0 pattern input root.
+//! Device-neutral sensory root.
 
 use super::{Root, RootChannel, RootDirection, RootId};
 
-/// Stable input attachment used by the four-symbol encoder.
+/// Stable sensory attachment for transduced root-channel spikes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PatternInputRoot {
+pub struct SensoryRoot {
     root: Root,
 }
 
-impl PatternInputRoot {
+impl SensoryRoot {
     /// Builds a sensory root from fixed channels.
     pub fn new(
         id: RootId,

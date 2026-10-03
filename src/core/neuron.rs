@@ -182,6 +182,27 @@ impl Neuron {
         self.activity_trace
     }
 
+    /// Projected local spike trace at `now` without mutating neuron state.
+    ///
+    /// Computes `A_i(now) = A_i(t_last) * exp(-(now - t_last) / tau_A)`,
+    /// returning the stored value when `now == t_last` and zero when `now`
+    /// precedes `t_last`. This lets read-only consumers such as the
+    /// development candidate search see a time-correct trace even when the
+    /// neuron has not received an event since its last update.
+    pub fn activity_trace_at(&self, now: SimTime) -> f32 {
+        let Some(elapsed_us) = now.duration_since(self.last_update) else {
+            return 0.0;
+        };
+        if elapsed_us == 0 {
+            return self.activity_trace;
+        }
+        decay_to_zero(
+            self.activity_trace,
+            elapsed_us,
+            self.params.activity_trace_tau_us,
+        )
+    }
+
     /// Local exponentially decaying trace of received input magnitudes.
     pub const fn input_trace(&self) -> f32 {
         self.input_trace

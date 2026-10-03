@@ -5,16 +5,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     config::{NervaConfig, NeuronConfig},
     core::{Network, Neuron, NeuronId, NeuronRole, Polarity, SimTime, Synapse, SynapseId},
-    environment::{Environment, Observation, Pattern, SequenceEnvironment},
+    experiment::m0::{Environment, Observation, Pattern, SequenceEnvironment},
+    io::ChannelId,
     learning::{NoPlasticity, PairStdp, PlasticityRule},
     math::{Position3D, conduction_delay_us},
     metrics::{FiringMetrics, SequenceMetrics, WeightMetrics},
     nerves::{Fiber, FiberDirection, FiberId, Mapping, Routing},
     primitives::Weight,
-    roots::{PatternInputRoot, RootChannel, RootId},
+    roots::{RootChannel, RootId, SensoryRoot},
     runtime::{ObservationEvent, Simulation},
-    transduction::{Encoder, PatternEncoder},
 };
+
+use crate::experiment::m0::{Encoder, PatternEncoder};
 
 use super::{
     Comparison, ExperimentError, M0Group, M0GroupResult, M0Metrics, M0StudyConfig, M0StudyReport,
@@ -41,7 +43,7 @@ type PatternNeuronMaps = (
 );
 
 struct M0InputPipeline {
-    root: PatternInputRoot,
+    root: SensoryRoot,
     encoder: PatternEncoder,
     mapping: Mapping,
 }
@@ -860,8 +862,8 @@ fn build_input_pipeline(
     let mut channels = Vec::new();
 
     for (channel, pattern) in PATTERNS.into_iter().enumerate() {
-        let channel = channel as u16;
-        let fiber_id = FiberId(u64::from(channel));
+        let channel = ChannelId(channel as u64);
+        let fiber_id = FiberId(channel.get());
         let fiber = Fiber::new(
             fiber_id,
             FiberDirection::Sensory,
@@ -882,7 +884,7 @@ fn build_input_pipeline(
         });
     }
 
-    let root = PatternInputRoot::new(root_id, "m0-pattern-input", channels)
+    let root = SensoryRoot::new(root_id, "m0-pattern-input", channels)
         .map_err(|error| ExperimentError::new("input root", error))?;
     Ok(M0InputPipeline {
         root,

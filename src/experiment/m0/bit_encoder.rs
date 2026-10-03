@@ -1,14 +1,17 @@
-//! Deterministic two-channel encoder for binary observations.
+//! Deterministic two-channel encoder for binary M0 observations.
 
 use std::{error::Error, fmt};
 
-use super::{ChannelSpike, Encoder, EncodingError, Observation};
+use crate::io::ChannelId;
+use crate::transduction::ChannelSpike;
+
+use super::{Encoder, EncodingError, Observation};
 
 /// Invalid fixed bit-channel encoding parameters.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BitEncoderError {
     /// False and true must remain distinguishable at the root boundary.
-    DuplicateChannels(u16),
+    DuplicateChannels(ChannelId),
     /// Encoded spike amplitude must be finite and strictly positive.
     InvalidAmplitude(f32),
 }
@@ -35,16 +38,16 @@ impl Error for BitEncoderError {}
 /// Encodes `false` and `true` as one spike on separate fixed channels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BitEncoder {
-    false_channel: u16,
-    true_channel: u16,
+    false_channel: ChannelId,
+    true_channel: ChannelId,
     amplitude: f32,
 }
 
 impl BitEncoder {
     /// Creates a validated two-channel encoder.
     pub fn new(
-        false_channel: u16,
-        true_channel: u16,
+        false_channel: ChannelId,
+        true_channel: ChannelId,
         amplitude: f32,
     ) -> Result<Self, BitEncoderError> {
         if false_channel == true_channel {
@@ -62,11 +65,11 @@ impl BitEncoder {
 
     /// Conventional channel `0 = false`, channel `1 = true` mapping.
     pub fn binary(amplitude: f32) -> Result<Self, BitEncoderError> {
-        Self::new(0, 1, amplitude)
+        Self::new(ChannelId(0), ChannelId(1), amplitude)
     }
 
     /// Channel used for a bit value.
-    pub const fn channel_for(self, value: bool) -> u16 {
+    pub const fn channel_for(self, value: bool) -> ChannelId {
         if value {
             self.true_channel
         } else {
@@ -78,8 +81,8 @@ impl BitEncoder {
 impl Default for BitEncoder {
     fn default() -> Self {
         Self {
-            false_channel: 0,
-            true_channel: 1,
+            false_channel: ChannelId(0),
+            true_channel: ChannelId(1),
             amplitude: 1.0,
         }
     }
@@ -100,7 +103,8 @@ impl Encoder for BitEncoder {
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::SimTime, transduction::Pattern};
+    use crate::core::SimTime;
+    use crate::experiment::m0::Pattern;
 
     use super::*;
 
@@ -116,12 +120,12 @@ mod tests {
                 })
                 .unwrap(),
             vec![ChannelSpike {
-                channel: 0,
+                channel: ChannelId(0),
                 at: SimTime(7),
                 amplitude: 1.25,
             }]
         );
-        assert_eq!(encoder.channel_for(true), 1);
+        assert_eq!(encoder.channel_for(true), ChannelId(1));
     }
 
     #[test]
@@ -140,8 +144,8 @@ mod tests {
     #[test]
     fn validates_channels_and_amplitude() {
         assert_eq!(
-            BitEncoder::new(3, 3, 1.0),
-            Err(BitEncoderError::DuplicateChannels(3))
+            BitEncoder::new(ChannelId(3), ChannelId(3), 1.0),
+            Err(BitEncoderError::DuplicateChannels(ChannelId(3)))
         );
         assert!(matches!(
             BitEncoder::binary(f32::NAN),

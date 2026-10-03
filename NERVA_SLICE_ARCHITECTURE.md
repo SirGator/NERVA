@@ -375,15 +375,31 @@ Geplante Roots sind:
 - `BodySensorRoot`
 - `MotorRoot`
 
-M0 benötigt nur eine einfache `PatternInputRoot` und eine beobachtbare `MotorRoot`.
+Die allgemeine Bibliothek stellt `SensoryRoot` und eine beobachtbare `MotorRoot`
+bereit. Auch M0 verwendet diese geräteneutralen Anschlussstellen.
 
 Eine Root besitzt Kanäle und verweist auf Nervenfasern. Sie setzt niemals direkt Membranpotentiale und kennt keine internen Synapsen.
 
 ### 6.7 `transduction`
 
-Transduktion übersetzt ein externes Signal in zeitliche Aktivität.
+Transduktion übersetzt geräteneutrale `io::ReceptorSignal`-Werte in zeitliche
+Aktivität (`ChannelSpike`) und `roots::MotorOutput` in `io::EffectorSignal`.
+`SensoryTransducer` und `MotorTransducer` puffern Eingänge mit `push` und
+verarbeiten sie sowie verstrichene Zeit mit `advance_until(until, &mut output)`.
+Beide Operationen geben `Result<(), TransductionError>` zurück. Der Horizont
+ist inklusiv; nach seinem Abschluss sind spätere Eingänge in dieses Intervall
+ungültig. Wiederholte Horizonte erzeugen keine doppelte Ausgabe. Auch ohne
+neue Eingänge kann Zeit für Rate-Coding oder Motorzerfall verstreichen.
 
-Für das M0-Experiment ordnet der `PatternEncoder` jedem Muster `A`, `B`, `C` und `D` eine feste, dünn besetzte Gruppe sensorischer Fasern zu. Ein Muster erzeugt einen reproduzierbaren Spike-Zug, nicht einen direkten Zahlenvektor im Neuron.
+Die direkten Implementierungen `DirectSensoryTransducer` und
+`DirectMotorTransducer` erhalten Kanal, Zeitstempel und positive Amplitude.
+
+Für das M0-Experiment ordnet `experiment::m0::PatternEncoder` jedem Muster `A`,
+`B`, `C` und `D` eine feste, dünn besetzte Gruppe sensorischer Fasern zu. Die
+Versuchstypen und ihre Encoder/Decoder liegen ausschließlich in
+`experiment::m0`, außerhalb der allgemeinen Transduktionsschicht. Ein Muster
+erzeugt einen reproduzierbaren Spike-Zug, nicht einen direkten Zahlenvektor im
+Neuron.
 
 Später können andere Encoder Bytes, Bilder, Audio oder Körpersensoren übersetzen, ohne den Core zu verändern.
 
@@ -418,9 +434,12 @@ fest erzeugten Topologie; das selbstständige Bilden und Abbauen solcher
 Verbindungen wird später durch lokale `development`-Mechanismen realisiert,
 nicht durch `roots`, `transduction` oder `nerves`.
 
-### 6.9 `environment`
+### 6.9 `io` und `experiment::m0::environment`
 
-Die Umgebung wird hinter einem kleinen Interface gekapselt:
+Die allgemeinen Außenweltadapter implementieren `io::Receptor` und
+`io::Effector`. Sie tauschen zeitgestempelte Werte über `io::ChannelId` aus und
+kennen keine Neuron-IDs. Nur die M0-Referenzumgebung verwendet das
+versuchsspezifische Interface unter `experiment::m0`:
 
 ```rust
 pub trait Environment {
@@ -587,11 +606,12 @@ Diese Begrenzung ist kein endgültiger Verzicht. Sie sorgt dafür, dass bei eine
 ```rust
 pub mod config;
 pub mod core;
-pub mod environment;
 pub mod experiment;
+pub mod io;
 pub mod learning;
 pub mod math;
 pub mod nerves;
+pub mod primitives;
 pub mod roots;
 pub mod runtime;
 pub mod transduction;
@@ -611,6 +631,6 @@ pub mod visualization;
 
 Die zuerst zu implementierende vertikale Strecke lautet damit:
 
-> `PatternInputRoot → PatternEncoder → SensoryNerve → EventScheduler → Core-Netz → Pair-STDP → Metrics`
+> `experiment::m0::PatternEncoder → SensoryRoot → Nerve/Fiber → EventScheduler → Core-Netz → Pair-STDP → Metrics`
 
 Erst wenn diese Strecke samt Kontrollgruppen funktioniert, wird sie um Motorwurzel, geschlossene Umgebung und später Entwicklung erweitert.

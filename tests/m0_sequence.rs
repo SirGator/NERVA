@@ -67,12 +67,19 @@ fn symmetric_topology_and_frozen_probe_leave_weights_unchanged() {
             .all(|&weight| (weight.get() - config.recurrent_weight).abs()
                 <= config.recurrent_weight_jitter + f32::EPSILON)
     );
-    assert!(fixed.final_weights[16..].chunks_exact(2).all(|pair| {
-        pair == [
-            Weight::new(config.inhibitory_drive_weight).unwrap(),
-            Weight::new(config.inhibitory_feedback_weight).unwrap(),
-        ]
-    }));
+    assert!(
+        fixed.final_weights[16..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pair| {
+                *pair
+                    == [
+                        Weight::new(config.inhibitory_drive_weight).unwrap(),
+                        Weight::new(config.inhibitory_feedback_weight).unwrap(),
+                    ]
+            })
+    );
     assert_eq!(fixed.initial_weights, fixed.final_weights);
     assert!(fixed.metrics.frozen_probe_replay_identical);
     assert!(fixed.metrics.frozen_weights_unchanged);

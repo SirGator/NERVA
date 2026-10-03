@@ -2,7 +2,7 @@
 
 use crate::{
     core::{NeuronId, SimTime},
-    environment::Pattern,
+    experiment::m0::Pattern,
     primitives::Weight,
     runtime::ObservationEvent,
 };

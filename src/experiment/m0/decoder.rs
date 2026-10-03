@@ -1,10 +1,10 @@
-//! Motor-root output decoders.
+//! M0 motor-root output decoder trait and bit decoder.
 
-use crate::roots::MotorOutput;
+use crate::{io::ChannelId, roots::MotorOutput};
 
 use super::Action;
 
-/// Converts observed motor-channel spikes into environment actions.
+/// Converts observed motor-channel spikes into M0 environment actions.
 pub trait Decoder {
     /// Decodes a read-only output batch.
     fn decode(&self, outputs: &[MotorOutput]) -> Vec<Action>;
@@ -19,8 +19,8 @@ impl Decoder for BitDecoder {
         outputs
             .iter()
             .filter_map(|output| match output.channel {
-                0 => Some(Action::SetBit(false)),
-                1 => Some(Action::SetBit(true)),
+                ChannelId(0) => Some(Action::SetBit(false)),
+                ChannelId(1) => Some(Action::SetBit(true)),
                 _ => None,
             })
             .collect()

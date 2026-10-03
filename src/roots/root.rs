@@ -1,6 +1,6 @@
 //! Root identity and channel metadata.
 
-use crate::nerves::FiberId;
+use crate::{io::ChannelId, nerves::FiberId};
 
 /// Stable identity of an external connection point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -18,8 +18,8 @@ pub enum RootDirection {
 /// One numbered root channel and its fixed fiber.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RootChannel {
-    /// Channel number interpreted only by transduction.
-    pub channel: u16,
+    /// Channel identity interpreted only by transduction.
+    pub channel: ChannelId,
     /// Fixed nerve fiber used for transport.
     pub fiber: FiberId,
 }

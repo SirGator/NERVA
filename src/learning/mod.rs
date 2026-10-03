@@ -6,6 +6,8 @@
 
 /// Hard bounds for non-negative synaptic weight magnitudes.
 pub mod bounds;
+/// Excitatory causal utility rule.
+pub mod excitatory_utility;
 /// Per-neuron cellular and structural homeostasis.
 pub mod homeostasis;
 /// Pair-based spike-timing-dependent plasticity.
@@ -14,9 +16,13 @@ pub mod pair_stdp;
 pub mod rule;
 /// Analytically decaying local traces.
 pub mod traces;
+/// Synapse-local structural utility evidence and memory boundary.
+pub mod utility;
 
 pub use bounds::{WeightBounds, WeightBoundsError};
+pub use excitatory_utility::ExcitatoryCausalUtility;
 pub use homeostasis::{HomeostasisError, HomeostaticChange, LocalHomeostasis};
 pub use pair_stdp::{PairStdp, PairStdpError};
 pub use rule::{NoPlasticity, PlasticityRule};
 pub use traces::{DecayingTrace, TraceError};
+pub use utility::{NoUtility, UtilityContext, UtilityDynamicsConfig, UtilityRule, UtilityTrigger};

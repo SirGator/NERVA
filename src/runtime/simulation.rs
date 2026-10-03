@@ -12,7 +12,10 @@ use crate::{
         Event, EventKind, Network, NetworkError, Neuron, NeuronError, NeuronId, SimTime, Spike,
         Synapse, SynapseError, SynapseId,
     },
-    learning::{HomeostasisError, LocalHomeostasis, PlasticityRule},
+    learning::{
+        HomeostasisError, LocalHomeostasis, NoUtility, PlasticityRule, UtilityContext,
+        UtilityDynamicsConfig, UtilityRule, UtilityTrigger,
+    },
     math::{DecayError, try_distance_attenuation},
     primitives::Weight,
 };
@@ -214,6 +217,15 @@ pub enum SimulationError {
     },
     /// A controlled live mutation of a synapse was rejected.
     InvalidNetworkMutation(SynapseError),
+    /// No unused `SynapseId` remains at or above a development cursor.
+    NoSynapseIdsAvailable,
+    /// A utility parameter was invalid.
+    InvalidUtilityParameter {
+        /// Parameter name.
+        parameter: &'static str,
+        /// Rejected value.
+        value: f32,
+    },
     /// The runtime already failed fatally and can no longer be advanced.
     SimulationPoisoned {
         /// Display text of the original fatal error.
@@ -278,6 +290,12 @@ impl fmt::Display for SimulationError {
             Self::InvalidNetworkMutation(error) => {
                 write!(formatter, "controlled network mutation failed: {error}")
             }
+            Self::NoSynapseIdsAvailable => {
+                formatter.write_str("no synapse identities remain for development")
+            }
+            Self::InvalidUtilityParameter { parameter, value } => {
+                write!(formatter, "invalid utility parameter {parameter}={value}")
+            }
             Self::SimulationPoisoned { reason } => write!(
                 formatter,
                 "this simulation failed fatally earlier and can no longer be advanced: {reason}"
@@ -326,9 +344,15 @@ impl From<HomeostasisError> for SimulationError {
 }
 
 /// Single-threaded event runtime parameterized by one local plasticity rule.
+///
+/// The utility evidence rule is held as a trait object (`Box<dyn UtilityRule>`)
+/// so that the second concern does not propagate as a second generic parameter
+/// through every call site. The default is [`NoUtility`], which leaves the
+/// utility memory of every synapse untouched.
 pub struct Simulation<R: PlasticityRule> {
     network: Network,
     plasticity_rule: R,
+    utility_rule: Box<dyn UtilityRule>,
     homeostasis: LocalHomeostasis,
     scheduler: EventScheduler<EventKind>,
     /// Scheduler bookkeeping intentionally lives in the runtime rather than
@@ -339,16 +363,42 @@ pub struct Simulation<R: PlasticityRule> {
     max_events_per_batch: usize,
     distance_decay_length: f32,
     learning_enabled: bool,
+    /// Canonical, validated parameters for the utility memory and eligibility
+    /// dynamics. This is the single source of truth; the pruning controller
+    /// and utility rules read from it instead of carrying their own copies.
+    utility_dynamics: UtilityDynamicsConfig,
     /// Set when a fatal batch error leaves the runtime in an inconsistent
     /// partial state. Every further mutation or execution is rejected.
     poisoned: Option<Box<SimulationError>>,
 }
 
 impl<R: PlasticityRule> Simulation<R> {
-    /// Creates a runtime with local homeostasis disabled by default.
+    /// Creates a runtime with local homeostasis disabled by default and the
+    /// no-op [`NoUtility`] utility rule.
     pub fn new(
         network: Network,
         plasticity_rule: R,
+        runtime_config: RuntimeConfig,
+        distance_decay_length: f32,
+    ) -> Result<Self, SimulationError> {
+        Self::with_utility_rule(
+            network,
+            plasticity_rule,
+            Box::new(NoUtility),
+            runtime_config,
+            distance_decay_length,
+        )
+    }
+
+    /// Creates a runtime with an explicit utility rule and default utility
+    /// dynamics.
+    ///
+    /// Use [`Self::with_utility_dynamics`] to override the canonical
+    /// [`UtilityDynamicsConfig`] defaults.
+    pub fn with_utility_rule(
+        network: Network,
+        plasticity_rule: R,
+        utility_rule: Box<dyn UtilityRule>,
         runtime_config: RuntimeConfig,
         distance_decay_length: f32,
     ) -> Result<Self, SimulationError> {
@@ -364,6 +414,7 @@ impl<R: PlasticityRule> Simulation<R> {
         let mut simulation = Self {
             network,
             plasticity_rule,
+            utility_rule,
             homeostasis: LocalHomeostasis::new(&HomeostasisConfig::default()),
             scheduler: EventScheduler::new(),
             homeostasis_bookings: HomeostasisBookings::default(),
@@ -372,10 +423,40 @@ impl<R: PlasticityRule> Simulation<R> {
             max_events_per_batch: runtime_config.max_events_per_batch,
             distance_decay_length,
             learning_enabled: true,
+            utility_dynamics: UtilityDynamicsConfig::default(),
             poisoned: None,
         };
         simulation.refresh_all_intrinsic_spikes()?;
         Ok(simulation)
+    }
+
+    /// Sets the canonical utility dynamics parameters.
+    ///
+    /// Must be called before the simulation is advanced. This is the single
+    /// source of truth — the pruning controller and utility rules read from
+    /// this config instead of carrying their own copies.
+    pub fn with_utility_dynamics(
+        mut self,
+        dynamics: UtilityDynamicsConfig,
+    ) -> Result<Self, SimulationError> {
+        dynamics
+            .validate()
+            .map_err(|_| SimulationError::InvalidUtilityParameter {
+                parameter: "utility_dynamics",
+                value: 0.0,
+            })?;
+        self.utility_dynamics = dynamics;
+        Ok(self)
+    }
+
+    /// Immutable reference to the canonical utility dynamics configuration.
+    pub fn utility_dynamics(&self) -> &UtilityDynamicsConfig {
+        &self.utility_dynamics
+    }
+
+    /// Immutable reference to the utility rule.
+    pub fn utility_rule(&self) -> &dyn UtilityRule {
+        self.utility_rule.as_ref()
     }
 
     /// Constructs a runtime from a complete, validated experiment config.
@@ -507,15 +588,53 @@ impl<R: PlasticityRule> Simulation<R> {
         operation: impl FnOnce(&mut Neuron) -> Result<(), NeuronError>,
     ) -> Result<(), SimulationError> {
         self.ensure_not_poisoned()?;
-        self.transaction(|simulation| {
-            let neuron = simulation
-                .network
-                .neuron_mut(neuron_id)
-                .ok_or(SimulationError::UnknownNeuron(neuron_id))?;
-            operation(neuron)?;
-            let now = simulation.current_time();
-            simulation.refresh_intrinsic_spike(neuron_id, now)
-        })
+        self.transaction(|simulation| simulation.update_neuron_inner(neuron_id, operation))
+    }
+
+    /// Crate-internal synapse addition without its own transaction.
+    ///
+    /// Used by the development plan commit so all mutations share one outer
+    /// transaction. Caller must already hold an outer transaction.
+    #[cfg(feature = "development")]
+    pub(crate) fn add_synapse_inner(&mut self, synapse: Synapse) -> Result<(), SimulationError> {
+        self.network
+            .add_synapse(synapse)
+            .map_err(SimulationError::InvalidNetwork)
+    }
+
+    /// Crate-internal synapse removal without its own transaction.
+    ///
+    /// Used by the development plan commit so all mutations share one outer
+    /// transaction. Caller must already hold an outer transaction.
+    #[cfg(feature = "development")]
+    pub(crate) fn remove_synapse_inner(
+        &mut self,
+        synapse_id: SynapseId,
+    ) -> Result<Synapse, SimulationError> {
+        let removed = self
+            .network
+            .remove_synapse(synapse_id)
+            .map_err(SimulationError::InvalidNetwork)?;
+        self.cancel_synaptic_arrivals(synapse_id);
+        Ok(removed)
+    }
+
+    /// Crate-internal neuron mutation without its own transaction.
+    ///
+    /// Used by the development plan commit so all mutations share one outer
+    /// transaction. Caller must already hold an outer transaction.
+    pub(crate) fn update_neuron_inner(
+        &mut self,
+        neuron_id: NeuronId,
+        operation: impl FnOnce(&mut Neuron) -> Result<(), NeuronError>,
+    ) -> Result<(), SimulationError> {
+        let neuron = self
+            .network
+            .neuron_mut(neuron_id)
+            .ok_or(SimulationError::UnknownNeuron(neuron_id))?;
+        operation(neuron)?;
+        let now = self.current_time();
+        self.refresh_intrinsic_spike(neuron_id, now)
     }
 
     /// Applies one mutation to a synapse's local state.
@@ -576,7 +695,7 @@ impl<R: PlasticityRule> Simulation<R> {
     /// booking indices are execution state; all three must commit or roll
     /// back together. The learning-rule and observation log cannot be touched
     /// by these controlled mutation paths and therefore need no snapshot.
-    fn transaction<T>(
+    pub(crate) fn transaction<T>(
         &mut self,
         operation: impl FnOnce(&mut Self) -> Result<T, SimulationError>,
     ) -> Result<T, SimulationError> {
@@ -1079,6 +1198,31 @@ impl<R: PlasticityRule> Simulation<R> {
                         .ok_or(SimulationError::UnknownSynapse(synapse_id))?
                         .record_transmission();
 
+                    // Record utility eligibility `e_ij` for every plastic
+                    // synapse, independent of whether the STDP rule accepts
+                    // it. Structural utility must not depend on the concrete
+                    // plasticity rule.
+                    // Record utility eligibility `e_ij` for every enabled
+                    // synapse, independent of whether the STDP rule accepts
+                    // it and independent of whether the synapse is weight-
+                    // plastic. Structural utility is a separate concern from
+                    // weight learning: even a non-plastic synapse may be
+                    // structurally useful and should be eligible for
+                    // utility-based pruning.
+                    if self.learning_enabled
+                        && self
+                            .network
+                            .synapse(synapse_id)
+                            .map(|s| s.is_enabled())
+                            .unwrap_or(false)
+                    {
+                        self.network
+                            .synapse_mut(synapse_id)
+                            .ok_or(SimulationError::UnknownSynapse(synapse_id))?
+                            .record_utility_arrival(time, self.utility_dynamics.eligibility_tau_us)
+                            .map_err(SimulationError::InvalidNetworkMutation)?;
+                    }
+
                     if self.learning_enabled && accepted_by_rule {
                         let post = self
                             .network
@@ -1151,6 +1295,9 @@ impl<R: PlasticityRule> Simulation<R> {
         if self.learning_enabled {
             for &spike in &spikes {
                 self.apply_post_spike_learning(spike)?;
+            }
+            for &spike in &spikes {
+                self.apply_post_spike_utility(spike)?;
             }
         }
 
@@ -1272,6 +1419,77 @@ impl<R: PlasticityRule> Simulation<R> {
                 .synapse_mut(synapse_id)
                 .ok_or(SimulationError::UnknownSynapse(synapse_id))? = updated;
             self.log_weight_change(spike.time, synapse_id, old_weight, new_weight);
+        }
+        Ok(())
+    }
+
+    /// Evaluates utility evidence for every incoming synapse of a neuron that
+    /// just fired and updates the synapse's utility memory when the rule
+    /// returns `Some(sample)`.
+    ///
+    /// This is the structural-utility analogue of [`Self::apply_post_spike_learning`].
+    /// It iterates over **all** incoming synapses of the spiking neuron, not
+    /// only those accepted by the plasticity rule: utility evidence is a
+    /// separate concern from STDP and must not depend on which connections the
+    /// weight-learning rule chooses to update.
+    fn apply_post_spike_utility(&mut self, spike: Spike) -> Result<(), SimulationError> {
+        let post_neuron = self
+            .network
+            .neuron(spike.neuron_id)
+            .ok_or(SimulationError::UnknownNeuron(spike.neuron_id))?
+            .clone();
+        let incoming_ids = self.network.incoming_synapse_ids(spike.neuron_id).to_vec();
+        let eligibility_tau = self.utility_dynamics.eligibility_tau_us;
+        let eta = self.utility_dynamics.eta;
+        let utility_tau = self.utility_dynamics.utility_tau_us;
+
+        for synapse_id in incoming_ids {
+            let polarity = self
+                .network
+                .neuron(
+                    self.network
+                        .synapse(synapse_id)
+                        .ok_or(SimulationError::UnknownSynapse(synapse_id))?
+                        .pre(),
+                )
+                .ok_or(SimulationError::UnknownNeuron(spike.neuron_id))?
+                .polarity();
+
+            // Skip synapses the active utility rule cannot judge: their
+            // memory must stay untouched so "unknown" is not conflated
+            // with "bad".
+            if !self.utility_rule.supports(polarity) {
+                continue;
+            }
+
+            let sample = {
+                let synapse = self
+                    .network
+                    .synapse(synapse_id)
+                    .ok_or(SimulationError::UnknownSynapse(synapse_id))?;
+                // Compute the decayed eligibility with the canonical τ_e so
+                // the rule does not need its own copy.
+                let eligibility = synapse
+                    .utility_eligibility_at(spike.time, eligibility_tau)
+                    .map_err(SimulationError::InvalidNetworkMutation)?;
+                let context = UtilityContext {
+                    synapse,
+                    post_neuron: &post_neuron,
+                    presynaptic_polarity: polarity,
+                    now: spike.time,
+                    trigger: UtilityTrigger::PostSpike,
+                    eligibility,
+                };
+                self.utility_rule.evidence(&context)
+            };
+
+            if let Some(sample) = sample {
+                self.network
+                    .synapse_mut(synapse_id)
+                    .ok_or(SimulationError::UnknownSynapse(synapse_id))?
+                    .update_utility(sample, eta, spike.time, utility_tau)
+                    .map_err(SimulationError::InvalidNetworkMutation)?;
+            }
         }
         Ok(())
     }

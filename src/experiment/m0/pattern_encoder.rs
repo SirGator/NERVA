@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use super::{ChannelSpike, Encoder, EncodingError, Observation, Pattern};
+use crate::io::ChannelId;
+use crate::transduction::ChannelSpike;
+
+use super::{Encoder, EncodingError, Observation, Pattern};
 
 /// Invalid pattern encoder setup.
 #[derive(Clone, Debug, PartialEq)]
@@ -14,7 +17,7 @@ pub enum PatternEncoderError {
         /// Pattern containing the duplicate assignment.
         pattern: Pattern,
         /// Channel assigned more than once.
-        channel: u16,
+        channel: ChannelId,
     },
     /// A burst offset list was empty.
     EmptyBurst,
@@ -27,7 +30,7 @@ pub enum PatternEncoderError {
 /// Fixed sparse channel groups and a fixed temporal burst shape.
 #[derive(Clone, Debug)]
 pub struct PatternEncoder {
-    channels: BTreeMap<Pattern, Vec<u16>>,
+    channels: BTreeMap<Pattern, Vec<ChannelId>>,
     burst_offsets_us: Vec<u64>,
     amplitude: f32,
 }
@@ -35,7 +38,7 @@ pub struct PatternEncoder {
 impl PatternEncoder {
     /// Creates and validates a deterministic encoder.
     pub fn new(
-        channels: BTreeMap<Pattern, Vec<u16>>,
+        channels: BTreeMap<Pattern, Vec<ChannelId>>,
         burst_offsets_us: Vec<u64>,
         amplitude: f32,
     ) -> Result<Self, PatternEncoderError> {
@@ -76,10 +79,10 @@ impl PatternEncoder {
     pub fn one_hot(amplitude: f32) -> Result<Self, PatternEncoderError> {
         Self::new(
             BTreeMap::from([
-                (Pattern::A, vec![0]),
-                (Pattern::B, vec![1]),
-                (Pattern::C, vec![2]),
-                (Pattern::D, vec![3]),
+                (Pattern::A, vec![ChannelId(0)]),
+                (Pattern::B, vec![ChannelId(1)]),
+                (Pattern::C, vec![ChannelId(2)]),
+                (Pattern::D, vec![ChannelId(3)]),
             ]),
             vec![0],
             amplitude,
@@ -87,7 +90,7 @@ impl PatternEncoder {
     }
 
     /// Assigned channels for a pattern.
-    pub fn channels(&self, pattern: Pattern) -> &[u16] {
+    pub fn channels(&self, pattern: Pattern) -> &[ChannelId] {
         self.channels
             .get(&pattern)
             .map(Vec::as_slice)
@@ -140,7 +143,7 @@ mod tests {
         assert_eq!(
             spikes,
             vec![ChannelSpike {
-                channel: 2,
+                channel: ChannelId(2),
                 at: SimTime(7),
                 amplitude: 1.25,
             }]
@@ -151,10 +154,10 @@ mod tests {
     fn reports_burst_timestamp_overflow() {
         let encoder = PatternEncoder::new(
             BTreeMap::from([
-                (Pattern::A, vec![0]),
-                (Pattern::B, vec![1]),
-                (Pattern::C, vec![2]),
-                (Pattern::D, vec![3]),
+                (Pattern::A, vec![ChannelId(0)]),
+                (Pattern::B, vec![ChannelId(1)]),
+                (Pattern::C, vec![ChannelId(2)]),
+                (Pattern::D, vec![ChannelId(3)]),
             ]),
             vec![2],
             1.0,

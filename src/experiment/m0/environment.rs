@@ -1,11 +1,12 @@
-//! Environment contract and deterministic M0 sequence source.
+//! M0 environment contract and deterministic sequence source.
 
 use std::collections::VecDeque;
 
 use crate::core::SimTime;
-pub use crate::transduction::{Action, Observation, Pattern};
 
-/// External systems are deliberately unaware of neurons and synapses.
+use super::{Action, Observation, Pattern};
+
+/// M0 external systems are deliberately unaware of neurons and synapses.
 pub trait Environment {
     /// Timestamp of the next externally available observation, if known.
     ///

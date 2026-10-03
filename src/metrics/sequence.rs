@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt};
 
-use crate::{core::SimTime, environment::Pattern};
+use crate::{core::SimTime, experiment::m0::Pattern};
 
 /// Invalid temporal scoring parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -25,8 +25,9 @@ pub struct HomeostasisConfig {
     pub intrinsic_adjustment_rate: f32,
     /// Structural-drive change per second and per missing input-rate unit.
     ///
-    /// Structural drive is a local request signal for a future growth/pruning
-    /// slice; it does not mutate topology in the M0 core.
+    /// Structural drive is an **incoming growth demand** signal for a future
+    /// development slice; it does not mutate topology in the M0 core. Negative
+    /// values carry no pruning semantics.
     pub structural_adjustment_rate: f32,
     /// Inclusive lower intrinsic-current bound.
     pub min_intrinsic_current: f32,

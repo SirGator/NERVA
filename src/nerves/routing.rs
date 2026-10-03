@@ -4,6 +4,7 @@ use std::{error::Error, fmt};
 
 use crate::{
     core::{NeuronId, SimTime},
+    io::ChannelId,
     roots::RootId,
     transduction::ChannelSpike,
 };
@@ -61,8 +62,8 @@ pub struct FiberImpulse {
     pub neuron: NeuronId,
     /// Root endpoint and its channel.
     pub root: RootId,
-    /// Root channel number.
-    pub channel: u16,
+    /// Stable root-local channel identity.
+    pub channel: ChannelId,
     /// Arrival timestamp at the receiving endpoint.
     pub arrives_at: SimTime,
     /// Positive unsigned amplitude. Neuronal polarity is a core concern.
@@ -145,7 +146,7 @@ fn validate_amplitude(fiber: FiberId, amplitude: f32) -> Result<(), RoutingError
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::NeuronId, roots::RootId, transduction::ChannelSpike};
+    use crate::{core::NeuronId, io::ChannelId, roots::RootId, transduction::ChannelSpike};
 
     use super::*;
     use crate::nerves::{Fiber, FiberDirection};
@@ -158,13 +159,15 @@ mod tests {
                 Fiber::new(FiberId(1), FiberDirection::Sensory, NeuronId(7), 5, 2.0).unwrap(),
             )
             .unwrap();
-        mapping.map_sensory(RootId(3), 4, FiberId(1)).unwrap();
+        mapping
+            .map_sensory(RootId(3), ChannelId(4), FiberId(1))
+            .unwrap();
 
         let impulse = Routing::sensory(
             &mapping,
             RootId(3),
             ChannelSpike {
-                channel: 4,
+                channel: ChannelId(4),
                 at: SimTime(10),
                 amplitude: 0.5,
             },
@@ -185,14 +188,16 @@ mod tests {
                 Fiber::new(FiberId(1), FiberDirection::Sensory, NeuronId(7), 2, 1.0).unwrap(),
             )
             .unwrap();
-        mapping.map_sensory(RootId(3), 4, FiberId(1)).unwrap();
+        mapping
+            .map_sensory(RootId(3), ChannelId(4), FiberId(1))
+            .unwrap();
 
         assert_eq!(
             Routing::sensory(
                 &mapping,
                 RootId(3),
                 ChannelSpike {
-                    channel: 4,
+                    channel: ChannelId(4),
                     at: SimTime(u64::MAX - 1),
                     amplitude: 1.0,
                 },
@@ -211,7 +216,9 @@ mod tests {
         mapping
             .add_fiber(Fiber::new(FiberId(1), FiberDirection::Motor, NeuronId(7), 2, 1.0).unwrap())
             .unwrap();
-        mapping.map_motor(RootId(3), 1, FiberId(1)).unwrap();
+        mapping
+            .map_motor(RootId(3), ChannelId(1), FiberId(1))
+            .unwrap();
 
         assert_eq!(
             Routing::motor(&mapping, NeuronId(7), SimTime(u64::MAX - 1)),
@@ -238,14 +245,16 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        mapping.map_sensory(RootId(3), 4, FiberId(1)).unwrap();
+        mapping
+            .map_sensory(RootId(3), ChannelId(4), FiberId(1))
+            .unwrap();
 
         assert!(matches!(
             Routing::sensory(
                 &mapping,
                 RootId(3),
                 ChannelSpike {
-                    channel: 4,
+                    channel: ChannelId(4),
                     at: SimTime::ZERO,
                     amplitude: f32::MAX,
                 },

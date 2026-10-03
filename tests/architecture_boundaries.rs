@@ -62,37 +62,51 @@ fn primitives_compile_without_any_higher_architectural_layer() {
 }
 
 #[test]
-fn transduction_does_not_depend_on_the_environment_layer() {
-    let transduction_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("transduction");
+fn io_boundary_modules_do_not_depend_on_experiment_or_environment_types() {
+    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
-    for entry in fs::read_dir(transduction_root).expect("transduction directory is readable") {
-        let path = entry.expect("transduction source entry is readable").path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
-            continue;
+    for module in ["io", "transduction", "roots", "nerves"] {
+        assert_device_neutral_sources(&source_root.join(module));
+    }
+}
+
+fn assert_device_neutral_sources(directory: &Path) {
+    for entry in fs::read_dir(directory).expect("boundary directory is readable") {
+        let path = entry.expect("boundary source entry is readable").path();
+        if path.is_dir() {
+            assert_device_neutral_sources(&path);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            let source = fs::read_to_string(&path).expect("boundary source is UTF-8 Rust text");
+            for forbidden in [
+                "experiment",
+                "environment::",
+                "Pattern",
+                "Observation",
+                "Action",
+                "Bit",
+                "M0",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} references experiment-specific type or module {forbidden}",
+                    path.display()
+                );
+            }
         }
-
-        let source = fs::read_to_string(&path).expect("transduction source is UTF-8 Rust text");
-        assert!(
-            !source.contains("crate::environment"),
-            "{} depends upward on the environment layer",
-            path.display()
-        );
     }
 }
 
 #[test]
-fn environment_paths_reexport_transduction_boundary_types() {
-    let pattern: nerva::transduction::Pattern = nerva::environment::Pattern::A;
-    let observation: nerva::transduction::Observation = nerva::environment::Observation::Pattern {
+fn experiment_m0_reexports_its_boundary_types() {
+    let pattern: nerva::experiment::Pattern = nerva::experiment::Pattern::A;
+    let observation: nerva::experiment::Observation = nerva::experiment::Observation::Pattern {
         at: SimTime::ZERO,
         pattern,
     };
-    let action: nerva::transduction::Action = nerva::environment::Action::NoOp;
+    let action: nerva::experiment::Action = nerva::experiment::Action::NoOp;
 
     assert_eq!(observation.time(), SimTime::ZERO);
-    assert_eq!(action, nerva::transduction::Action::NoOp);
+    assert_eq!(action, nerva::experiment::Action::NoOp);
 }
 
 #[test]
