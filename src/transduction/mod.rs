@@ -42,8 +42,13 @@
 
 mod direct;
 mod error;
+mod pending;
+mod poisson;
+mod rate;
 mod transducer;
 
 pub use direct::{DirectMotorTransducer, DirectSensoryTransducer};
 pub use error::TransductionError;
+pub use poisson::PoissonSensoryTransducer;
+pub use rate::RateSensoryTransducer;
 pub use transducer::{ChannelSpike, MotorTransducer, SensoryTransducer};

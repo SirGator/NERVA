@@ -98,13 +98,27 @@ pub fn plan_spike_propagation(
     spike: Spike,
     distance_decay_length: f32,
 ) -> Result<Vec<PlannedTransmission>, PropagationError> {
+    let mut transmissions = Vec::new();
+    plan_spike_propagation_into(network, spike, distance_decay_length, &mut transmissions)?;
+    Ok(transmissions)
+}
+
+/// Reuses a batch-local buffer without publishing any events. Callers must
+/// enqueue only after success: an error can leave a partial plan in the buffer.
+pub(crate) fn plan_spike_propagation_into(
+    network: &Network,
+    spike: Spike,
+    distance_decay_length: f32,
+    transmissions: &mut Vec<PlannedTransmission>,
+) -> Result<(), PropagationError> {
+    transmissions.clear();
     let source = network
         .neuron(spike.neuron_id)
         .ok_or(PropagationError::UnknownSourceNeuron(spike.neuron_id))?;
     let source_position = source.position();
     let source_polarity = source.polarity();
     let outgoing = network.outgoing_synapse_ids(spike.neuron_id);
-    let mut transmissions = Vec::with_capacity(outgoing.len());
+    transmissions.reserve(outgoing.len());
 
     for &synapse_id in outgoing {
         let synapse = network
@@ -151,7 +165,7 @@ pub fn plan_spike_propagation(
         });
     }
 
-    Ok(transmissions)
+    Ok(())
 }
 
 #[cfg(test)]

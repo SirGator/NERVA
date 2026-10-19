@@ -1,6 +1,6 @@
 //! Root identity and channel metadata.
 
-use crate::{io::ChannelId, nerves::FiberId};
+use crate::io::ChannelId;
 
 /// Stable identity of an external connection point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -15,13 +15,11 @@ pub enum RootDirection {
     Motor,
 }
 
-/// One numbered root channel and its fixed fiber.
+/// One declared root channel. Physical transport belongs to nerve mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RootChannel {
     /// Channel identity interpreted only by transduction.
     pub channel: ChannelId,
-    /// Fixed nerve fiber used for transport.
-    pub fiber: FiberId,
 }
 
 /// Common immutable root metadata.
@@ -38,7 +36,7 @@ pub struct Root {
 }
 
 impl Root {
-    /// Builds a root and validates that channel numbers and fibers are unique.
+    /// Builds a root and validates that channel identities are unique.
     pub fn new(
         id: RootId,
         name: impl Into<String>,
@@ -51,11 +49,6 @@ impl Root {
             .any(|pair| pair[0].channel == pair[1].channel)
         {
             return Err("root channel numbers must be unique");
-        }
-        let mut fibers: Vec<_> = channels.iter().map(|entry| entry.fiber).collect();
-        fibers.sort_unstable();
-        if fibers.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err("root fibers must be unique");
         }
         Ok(Self {
             id,

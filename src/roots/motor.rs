@@ -1,6 +1,6 @@
 //! Passive, observable motor root.
 
-use crate::{core::SimTime, io::ChannelId};
+use crate::{io::ChannelId, primitives::SimTime};
 
 use super::{Root, RootChannel, RootDirection, RootId};
 

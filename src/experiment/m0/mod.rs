@@ -14,7 +14,7 @@ mod types;
 pub use bit_encoder::{BitEncoder, BitEncoderError};
 pub use bit_world::BitWorld;
 pub use decoder::{BitDecoder, Decoder};
-pub use encoder::{EncodingError, Encoder};
+pub use encoder::{Encoder, EncodingError};
 pub use environment::{Environment, SequenceEnvironment};
 pub use pattern_encoder::{PatternEncoder, PatternEncoderError};
 pub use types::{Action, Observation, Pattern};

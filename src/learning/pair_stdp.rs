@@ -42,7 +42,7 @@ pub enum PairStdpError {
 /// enforce the finite STDP window exactly. Each update pairs a spike with
 /// only the most recent opposite spike inside the window
 /// (nearest-neighbor pairing), rather than summing over all trace partners.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PairStdp {
     enabled: bool,
     a_plus: f32,

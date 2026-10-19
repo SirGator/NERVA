@@ -13,7 +13,7 @@ use crate::{
     nerves::{Fiber, FiberDirection, FiberId, Mapping, Routing},
     primitives::Weight,
     roots::{RootChannel, RootId, SensoryRoot},
-    runtime::{ObservationEvent, Simulation},
+    runtime::{ObservationEvent, RuntimeProfile, Simulation},
 };
 
 use crate::experiment::m0::{Encoder, PatternEncoder};
@@ -319,6 +319,20 @@ impl M0Experiment {
 
     /// Runs training, freezes weights, presents A, and calculates measurements.
     pub fn run(&self) -> Result<M0GroupResult, ExperimentError> {
+        self.run_impl(false).map(|(result, _)| result)
+    }
+
+    /// Runs the same experiment with host diagnostics, including both frozen probes.
+    /// Wall times are returned separately from the deterministic result record.
+    pub fn run_profiled(&self) -> Result<(M0GroupResult, RuntimeProfile), ExperimentError> {
+        self.run_impl(true)
+            .map(|(result, profile)| (result, profile.expect("profiling enabled")))
+    }
+
+    fn run_impl(
+        &self,
+        profiling: bool,
+    ) -> Result<(M0GroupResult, Option<RuntimeProfile>), ExperimentError> {
         let mut group_config = self.config.nerva.clone();
         group_config.learning.enabled = self.group != M0Group::OrderedFixed;
         group_config.learning.homeostasis.enabled = self.group == M0Group::OrderedHomeostasis;
@@ -330,6 +344,9 @@ impl M0Experiment {
             .map_err(|error| ExperimentError::new("learning", format!("{error:?}")))?;
         let mut simulation =
             Simulation::from_config(network, rule, &group_config).map_err(runtime_error)?;
+        if profiling {
+            simulation.enable_profiling();
+        }
 
         let training_patterns = self.training_patterns();
         let mut scheduled_patterns = Vec::with_capacity(training_patterns.len());
@@ -387,6 +404,7 @@ impl M0Experiment {
             &pattern_neurons,
             &self.config,
             probe_start,
+            profiling,
         )?;
         let second_probe = run_frozen_probe(
             trained_network,
@@ -394,6 +412,7 @@ impl M0Experiment {
             &pattern_neurons,
             &self.config,
             probe_start,
+            profiling,
         )?;
         let frozen_probe_replay_identical = first_probe.events == second_probe.events
             && first_probe.final_network == second_probe.final_network;
@@ -462,43 +481,61 @@ impl M0Experiment {
         let event_log_digest = digest_event_log(&event_log);
         let stable_after_learning = training_stable && first_probe.stable && second_probe.stable;
 
+        let mut profile = simulation.take_profile();
+        if let Some(profile) = &mut profile {
+            profile.merge(
+                first_probe
+                    .profile
+                    .as_ref()
+                    .expect("probe profiling enabled"),
+            );
+            profile.merge(
+                second_probe
+                    .profile
+                    .as_ref()
+                    .expect("probe profiling enabled"),
+            );
+        }
         let mut effective_config = self.config.clone();
         effective_config.nerva = group_config;
-        Ok(M0GroupResult {
-            group: self.group,
-            seed: self.config.nerva.network.seed,
-            effective_config,
-            training_patterns,
-            initial_weights,
-            final_weights,
-            metrics: M0Metrics {
-                transition_hits: first_probe.sequence.transition_hits,
-                false_transitions: first_probe.sequence.false_transitions,
-                probe_spikes: first_probe.firing.total_spike_count(),
-                training_mean_rate_hz: training_firing
-                    .mean_rate_hz(all_neurons.iter().copied(), training_deadline.as_micros()),
-                training_neuron_rates_hz,
-                probe_mean_rate_hz: first_probe
-                    .firing
-                    .mean_rate_hz(all_neurons.iter().copied(), self.config.probe_duration_us),
-                probe_neuron_rates_hz,
-                silent_neuron_fraction: first_probe
-                    .firing
-                    .silent_fraction(all_neurons.iter().copied()),
-                persistently_active_neuron_fraction: first_probe.persistent_fraction,
-                transition_latency_errors_us: first_probe.sequence.latency_errors_us.clone(),
-                weights_at_min_fraction: weight_metrics.at_min_fraction,
-                weights_at_max_fraction: weight_metrics.at_max_fraction,
-                expected_transition_weight_delta,
-                competing_transition_weight_delta,
-                stable_after_learning,
-                frozen_probe_replay_identical,
-                frozen_weights_unchanged,
+        Ok((
+            M0GroupResult {
+                group: self.group,
+                seed: self.config.nerva.network.seed,
+                effective_config,
+                training_patterns,
+                initial_weights,
+                final_weights,
+                metrics: M0Metrics {
+                    transition_hits: first_probe.sequence.transition_hits,
+                    false_transitions: first_probe.sequence.false_transitions,
+                    probe_spikes: first_probe.firing.total_spike_count(),
+                    training_mean_rate_hz: training_firing
+                        .mean_rate_hz(all_neurons.iter().copied(), training_deadline.as_micros()),
+                    training_neuron_rates_hz,
+                    probe_mean_rate_hz: first_probe
+                        .firing
+                        .mean_rate_hz(all_neurons.iter().copied(), self.config.probe_duration_us),
+                    probe_neuron_rates_hz,
+                    silent_neuron_fraction: first_probe
+                        .firing
+                        .silent_fraction(all_neurons.iter().copied()),
+                    persistently_active_neuron_fraction: first_probe.persistent_fraction,
+                    transition_latency_errors_us: first_probe.sequence.latency_errors_us.clone(),
+                    weights_at_min_fraction: weight_metrics.at_min_fraction,
+                    weights_at_max_fraction: weight_metrics.at_max_fraction,
+                    expected_transition_weight_delta,
+                    competing_transition_weight_delta,
+                    stable_after_learning,
+                    frozen_probe_replay_identical,
+                    frozen_weights_unchanged,
+                },
+                predicted_patterns: first_probe.predicted_patterns,
+                event_log_digest,
+                event_log,
             },
-            predicted_patterns: first_probe.predicted_patterns,
-            event_log_digest,
-            event_log,
-        })
+            profile,
+        ))
     }
 
     fn training_patterns(&self) -> Vec<Pattern> {
@@ -858,8 +895,14 @@ fn build_input_pipeline(
     let root_id = RootId(1);
     let encoder = PatternEncoder::one_hot(amplitude)
         .map_err(|error| ExperimentError::new("input encoder", format!("{error:?}")))?;
+    let channels = (0..PATTERNS.len())
+        .map(|channel| RootChannel {
+            channel: ChannelId(channel as u64),
+        })
+        .collect();
+    let root = SensoryRoot::new(root_id, "m0-pattern-input", channels)
+        .map_err(|error| ExperimentError::new("input root", error))?;
     let mut mapping = Mapping::new();
-    let mut channels = Vec::new();
 
     for (channel, pattern) in PATTERNS.into_iter().enumerate() {
         let channel = ChannelId(channel as u64);
@@ -876,16 +919,10 @@ fn build_input_pipeline(
             .add_fiber(fiber)
             .map_err(|error| ExperimentError::new("input nerve", format!("{error:?}")))?;
         mapping
-            .map_sensory(root_id, channel, fiber_id)
+            .map_sensory(root.root(), channel, fiber_id)
             .map_err(|error| ExperimentError::new("input nerve", format!("{error:?}")))?;
-        channels.push(RootChannel {
-            channel,
-            fiber: fiber_id,
-        });
     }
 
-    let root = SensoryRoot::new(root_id, "m0-pattern-input", channels)
-        .map_err(|error| ExperimentError::new("input root", error))?;
     Ok(M0InputPipeline {
         root,
         encoder,
@@ -894,6 +931,7 @@ fn build_input_pipeline(
 }
 
 struct ProbeOutcome {
+    profile: Option<RuntimeProfile>,
     events: Vec<ObservationEvent>,
     predicted_patterns: Vec<(SimTime, Pattern)>,
     sequence: SequenceMetrics,
@@ -909,6 +947,7 @@ fn run_frozen_probe(
     pattern_neurons: &BTreeMap<Pattern, NeuronId>,
     config: &M0ExperimentConfig,
     probe_start: SimTime,
+    profiling: bool,
 ) -> Result<ProbeOutcome, ExperimentError> {
     let mut simulation = Simulation::new(
         network,
@@ -917,6 +956,9 @@ fn run_frozen_probe(
         config.nerva.network.distance_decay_length,
     )
     .map_err(runtime_error)?;
+    if profiling {
+        simulation.enable_profiling();
+    }
     input.schedule(&mut simulation, probe_start, Pattern::A)?;
     let deadline = checked_advance(probe_start, config.probe_duration_us, "probe horizon")?;
     simulation.run_until(deadline).map_err(runtime_error)?;
@@ -965,9 +1007,11 @@ fn run_frozen_probe(
         persistent_neurons.len() as f32 / neuron_count as f32
     };
     let stable = simulation.pending_event_count() == 0 && persistent_neurons.is_empty();
+    let profile = simulation.take_profile();
     let final_network = simulation.into_parts().0;
 
     Ok(ProbeOutcome {
+        profile,
         events,
         predicted_patterns,
         sequence,

@@ -12,7 +12,7 @@ pub use comparison::{
     Comparison, M0Group, M0GroupResult, M0Metrics, M0StudyConfig, M0StudyReport, M0SuccessReport,
 };
 pub use m0::{
-    Action, BitDecoder, BitEncoder, BitEncoderError, BitWorld, Decoder, EncodingError, Encoder,
+    Action, BitDecoder, BitEncoder, BitEncoderError, BitWorld, Decoder, Encoder, EncodingError,
     Environment, Observation, Pattern, PatternEncoder, PatternEncoderError, SequenceEnvironment,
 };
 pub use runner::{ExperimentError, ExperimentRecord, ExperimentRunner};

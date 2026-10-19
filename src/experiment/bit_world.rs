@@ -57,7 +57,7 @@ pub enum ClosedLoopError {
         /// Root found in the fixed mapping.
         actual: RootId,
     },
-    /// A motor mapping targets a channel/fiber pair not declared by the root.
+    /// A motor mapping targets a channel not declared by the root.
     UnexpectedMotorChannel {
         /// Motor root receiving the impulse.
         root: RootId,
@@ -143,7 +143,7 @@ impl fmt::Display for ClosedLoopError {
                 fiber,
             } => write!(
                 formatter,
-                "motor mapping targets undeclared channel {channel} and fiber {fiber:?} on root {root:?}"
+                "motor mapping via fiber {fiber:?} targets undeclared channel {channel} on root {root:?}"
             ),
             Self::TimeWentBackwards { current, requested } => write!(
                 formatter,
@@ -544,9 +544,12 @@ where
                         actual: impulse.root,
                     });
                 }
-                let channel_is_declared = self.motor_root.root().channels.iter().any(|declared| {
-                    declared.channel == impulse.channel && declared.fiber == impulse.fiber
-                });
+                let channel_is_declared = self
+                    .motor_root
+                    .root()
+                    .channels
+                    .iter()
+                    .any(|declared| declared.channel == impulse.channel);
                 if !channel_is_declared {
                     return Err(ClosedLoopError::UnexpectedMotorChannel {
                         root: expected_root,
@@ -608,8 +611,8 @@ mod tests {
         experiment::m0::{Action, BitDecoder, BitEncoder, BitWorld},
         learning::NoPlasticity,
         math::Position3D,
-        nerves::{Fiber, FiberDirection, FiberId},
-        roots::RootChannel,
+        nerves::{Fiber, FiberDirection, FiberId, MappingError},
+        roots::{RootChannel, SensoryRoot},
     };
 
     use super::*;
@@ -693,8 +696,28 @@ mod tests {
     fn closed_loop_with_environment<E: Environment>(
         environment: E,
     ) -> ClosedLoop<E, BitEncoder, BitDecoder, NoPlasticity> {
-        let sensory_root = RootId(1);
+        let sensory_root = SensoryRoot::new(
+            RootId(1),
+            "bit receptor",
+            vec![
+                RootChannel {
+                    channel: ChannelId(0),
+                },
+                RootChannel {
+                    channel: ChannelId(1),
+                },
+            ],
+        )
+        .unwrap();
         let motor_root_id = RootId(2);
+        let motor_root = MotorRoot::new(
+            motor_root_id,
+            "bit actuator",
+            vec![RootChannel {
+                channel: ChannelId(1),
+            }],
+        )
+        .unwrap();
         let mut mapping = Mapping::new();
         for (id, channel) in [(10, ChannelId(0)), (11, ChannelId(1))] {
             mapping
@@ -703,31 +726,21 @@ mod tests {
                 )
                 .unwrap();
             mapping
-                .map_sensory(sensory_root, channel, FiberId(id))
+                .map_sensory(sensory_root.root(), channel, FiberId(id))
                 .unwrap();
         }
         mapping
             .add_fiber(Fiber::new(FiberId(20), FiberDirection::Motor, NeuronId(1), 1, 1.0).unwrap())
             .unwrap();
         mapping
-            .map_motor(motor_root_id, ChannelId(1), FiberId(20))
+            .map_motor(motor_root.root(), ChannelId(1), FiberId(20))
             .unwrap();
-
-        let motor_root = MotorRoot::new(
-            motor_root_id,
-            "bit actuator",
-            vec![RootChannel {
-                channel: ChannelId(1),
-                fiber: FiberId(20),
-            }],
-        )
-        .unwrap();
 
         ClosedLoop::new(
             environment,
             BitEncoder::default(),
             mapping,
-            sensory_root,
+            sensory_root.root().id,
             motor_root,
             BitDecoder,
             simulation(),
@@ -832,52 +845,28 @@ mod tests {
     }
 
     #[test]
-    fn motor_mapping_must_match_the_declared_root_channel_and_fiber() {
-        let sensory_root = RootId(1);
+    fn motor_mapping_rejects_an_undeclared_channel_before_closed_loop_execution() {
         let motor_root_id = RootId(2);
         let mut mapping = Mapping::new();
         mapping
-            .add_fiber(
-                Fiber::new(FiberId(10), FiberDirection::Sensory, NeuronId(1), 1, 1.0).unwrap(),
-            )
-            .unwrap();
-        mapping
-            .map_sensory(sensory_root, ChannelId(0), FiberId(10))
-            .unwrap();
-        mapping
             .add_fiber(Fiber::new(FiberId(20), FiberDirection::Motor, NeuronId(1), 1, 1.0).unwrap())
-            .unwrap();
-        mapping
-            .map_motor(motor_root_id, ChannelId(1), FiberId(20))
             .unwrap();
         let motor_root = MotorRoot::new(
             motor_root_id,
             "mismatched actuator",
             vec![RootChannel {
                 channel: ChannelId(0),
-                fiber: FiberId(20),
             }],
         )
         .unwrap();
-        let mut loop_with_mismatch = ClosedLoop::new(
-            BitWorld::new(false),
-            BitEncoder::default(),
-            mapping,
-            sensory_root,
-            motor_root,
-            BitDecoder,
-            simulation(),
-        )
-        .unwrap();
-
         assert_eq!(
-            loop_with_mismatch.cycle_until(SimTime(1)),
-            Err(ClosedLoopError::UnexpectedMotorChannel {
+            mapping.map_motor(motor_root.root(), ChannelId(1), FiberId(20)),
+            Err(MappingError::UnknownChannel {
                 root: motor_root_id,
                 channel: ChannelId(1),
-                fiber: FiberId(20),
             })
         );
+        assert!(mapping.motor_fibers(NeuronId(1)).next().is_none());
     }
 
     #[test]

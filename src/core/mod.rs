@@ -3,6 +3,8 @@
 //! The core has no scheduler and knows no concrete learning rule. It exposes
 //! validated state transitions that the runtime may compose deterministically.
 
+/// Backend-neutral numerical state and shared analytical cell kernels.
+pub mod dynamics;
 /// Timestamped input events and simulation time.
 pub mod event;
 /// Stable identity wrapper types.
@@ -18,6 +20,7 @@ pub mod spike;
 /// Directed synaptic connection state.
 pub mod synapse;
 
+pub use dynamics::{NeuronDynamicsParams, NeuronDynamicsState};
 pub use event::{Event, EventKind, SimTime, SimTimeError};
 pub use ids::{NeuronId, SynapseId};
 pub use intrinsic::IntrinsicState;

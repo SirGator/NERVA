@@ -14,7 +14,7 @@ pub(crate) struct HomeostasisBooking {
 }
 
 /// Runtime-only index of one recurring maintenance booking per neuron.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct HomeostasisBookings(BTreeMap<NeuronId, HomeostasisBooking>);
 
 impl HomeostasisBookings {

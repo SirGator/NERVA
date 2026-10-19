@@ -28,6 +28,13 @@ pub enum TransductionError {
         /// Rejected amplitude.
         amplitude: f32,
     },
+    /// A firing rate is not finite or lies outside `0..=1_000_000` Hz.
+    InvalidRate {
+        /// Channel of the rejected value.
+        channel: ChannelId,
+        /// Rejected firing rate in Hertz.
+        rate_hz: f32,
+    },
 }
 
 impl fmt::Display for TransductionError {
@@ -47,6 +54,10 @@ impl fmt::Display for TransductionError {
             Self::InvalidAmplitude { channel, amplitude } => write!(
                 formatter,
                 "direct transduction amplitude on channel {channel} must be finite and greater than zero, got {amplitude}"
+            ),
+            Self::InvalidRate { channel, rate_hz } => write!(
+                formatter,
+                "rate on channel {channel} must be finite and between 0 and 1000000 Hz, got {rate_hz}"
             ),
         }
     }

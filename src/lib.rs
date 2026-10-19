@@ -52,6 +52,8 @@
 //! APIs. Optional features expose `diagnostics` (snapshots and metrics),
 //! `visualization` (CSV/JSON export), and the reserved `development` boundary.
 
+/// Numerical backend contract and deterministic CPU computation.
+pub mod compute;
 /// Validated, immutable simulation parameters.
 pub mod config;
 /// Neurons, synapses, spikes, IDs and sparse graph state.

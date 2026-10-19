@@ -176,9 +176,9 @@ impl PruningController {
         let threshold = self.config.pruning_threshold;
         let utility_rule = simulation.utility_rule();
 
-        let live_ids: Vec<SynapseId> = network.synapse_ids().collect();
-
-        self.states.retain(|id, _| live_ids.contains(id));
+        // Use the authoritative index instead of rebuilding and scanning an
+        // ID vector for every tracked timer.
+        self.states.retain(|id, _| network.synapse(*id).is_some());
 
         for synapse in network.synapses() {
             if !self.config.prune_non_plastic && !synapse.is_plastic() {
@@ -716,6 +716,78 @@ mod tests {
             None,
             "removed synapse must be cleaned from tracking"
         );
+    }
+
+    #[test]
+    fn cleanup_preserves_live_timers_and_starts_new_sparse_ids_at_the_current_time() {
+        let mut network = make_network_with_synapse(0.0);
+        for id in [1_000, 1_000_000] {
+            network
+                .add_synapse(
+                    Synapse::new(
+                        SynapseId(id),
+                        NeuronId(1),
+                        NeuronId(2),
+                        Weight::new(0.5).unwrap(),
+                        1,
+                        true,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let mut simulation = run_to(network, 100_000);
+        let mut controller = PruningController::new(PruningConfig {
+            pruning_threshold: 0.01,
+            min_below_duration_us: 1_000_000,
+            prune_non_plastic: false,
+        })
+        .unwrap();
+        controller.observe(&simulation).unwrap();
+        let survivor_since = controller.below_threshold_since(SynapseId(1_000));
+        assert_eq!(survivor_since, Some(SimTime(100_000)));
+
+        for id in [10, 1_000_000] {
+            simulation.remove_synapse(SynapseId(id)).unwrap();
+        }
+        simulation
+            .schedule_external_input(SimTime(200_000), NeuronId(1), 0.0)
+            .unwrap();
+        simulation.run_until(SimTime(200_000)).unwrap();
+        simulation
+            .add_synapse(
+                Synapse::new(
+                    SynapseId(5_000_000),
+                    NeuronId(1),
+                    NeuronId(2),
+                    Weight::new(0.5).unwrap(),
+                    1,
+                    true,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        controller.observe(&simulation).unwrap();
+        assert_eq!(controller.states.len(), 2);
+        assert!(!controller.states.contains_key(&SynapseId(10)));
+        assert!(!controller.states.contains_key(&SynapseId(1_000_000)));
+        assert_eq!(
+            controller.below_threshold_since(SynapseId(1_000)),
+            survivor_since
+        );
+        assert_eq!(
+            controller.below_threshold_since(SynapseId(5_000_000)),
+            Some(SimTime(200_000))
+        );
+
+        simulation
+            .schedule_external_input(SimTime(1_150_000), NeuronId(1), 0.0)
+            .unwrap();
+        simulation.run_until(SimTime(1_150_000)).unwrap();
+        controller.observe(&simulation).unwrap();
+        let candidates = controller.candidates(&simulation).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].synapse_id, SynapseId(1_000));
     }
 
     #[test]

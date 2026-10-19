@@ -4,7 +4,7 @@ use nerva::{
     roots::MotorOutput,
     transduction::{
         ChannelSpike, DirectMotorTransducer, DirectSensoryTransducer, MotorTransducer,
-        SensoryTransducer, TransductionError,
+        RateSensoryTransducer, SensoryTransducer, TransductionError,
     },
 };
 
@@ -170,59 +170,9 @@ fn direct_transducers_reject_invalid_amplitudes_without_poisoning_the_queue() {
     assert_eq!(signals[0].value, 0.5);
 }
 
-// Minimal single-channel fixtures exercise continuous time through the public
-// traits. They are deliberately test-only, not production coding policies.
-#[derive(Clone, Default)]
-struct RegularRateFixture {
-    inbox: DirectSensoryTransducer,
-    channel: ChannelId,
-    period_us: u64,
-    next_spike: Option<SimTime>,
-}
-
-impl RegularRateFixture {
-    fn emit_until(&mut self, until: SimTime, output: &mut Vec<ChannelSpike>) {
-        while let Some(at) = self.next_spike.filter(|at| *at <= until) {
-            output.push(ChannelSpike {
-                channel: self.channel,
-                at,
-                amplitude: 1.0,
-            });
-            self.next_spike = at.checked_add_us(self.period_us);
-        }
-    }
-}
-
-impl SensoryTransducer for RegularRateFixture {
-    fn push(&mut self, signal: ReceptorSignal) -> Result<(), TransductionError> {
-        self.inbox.push(signal)
-    }
-
-    fn advance_until(
-        &mut self,
-        until: SimTime,
-        output: &mut Vec<ChannelSpike>,
-    ) -> Result<(), TransductionError> {
-        let mut updates = Vec::new();
-        self.inbox.advance_until(until, &mut updates)?;
-        for update in updates {
-            // A value change replaces the previous rate before any spike at
-            // the same time. The test rates divide one second exactly.
-            if let Some(before) = update.at.as_micros().checked_sub(1) {
-                self.emit_until(SimTime(before), output);
-            }
-            self.channel = update.channel;
-            self.period_us = (1_000_000.0 / update.amplitude) as u64;
-            self.next_spike = update.at.checked_add_us(self.period_us);
-        }
-        self.emit_until(until, output);
-        Ok(())
-    }
-}
-
 #[test]
 fn rate_trait_emits_during_receptor_silence_independently_of_horizon_partition() {
-    let mut whole = RegularRateFixture::default();
+    let mut whole = RateSensoryTransducer::new();
     let rate: &mut dyn SensoryTransducer = &mut whole;
     rate.push(input(1, 100_000, 100.0)).unwrap();
     let mut split = whole.clone();
@@ -254,7 +204,7 @@ fn rate_trait_emits_during_receptor_silence_independently_of_horizon_partition()
 
 #[test]
 fn rate_changes_take_effect_at_their_event_time_even_with_a_large_horizon() {
-    let mut whole = RegularRateFixture::default();
+    let mut whole = RateSensoryTransducer::new();
     whole.push(input(1, 115_000, 200.0)).unwrap();
     whole.push(input(1, 100_000, 100.0)).unwrap();
     let mut split = whole.clone();
@@ -273,14 +223,15 @@ fn rate_changes_take_effect_at_their_event_time_even_with_a_large_horizon() {
         all_spikes.iter().map(|spike| spike.at).collect::<Vec<_>>(),
         [
             SimTime(110_000),
-            SimTime(120_000),
-            SimTime(125_000),
-            SimTime(130_000)
+            SimTime(117_500),
+            SimTime(122_500),
+            SimTime(127_500)
         ]
     );
 }
 
 #[derive(Clone, Default)]
+// This decoder remains test-only; rate coding above uses the public encoder.
 struct DecayingMotorFixture {
     inbox: DirectMotorTransducer,
     channel: Option<ChannelId>,

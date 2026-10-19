@@ -78,17 +78,27 @@ nerva/
 │   │   └── concentration.rs
 │   ├── core/
 │   │   ├── mod.rs
+│   │   ├── dynamics.rs        # numerische Datensätze und gemeinsame Kernel
 │   │   ├── ids.rs
 │   │   ├── neuron.rs
 │   │   ├── synapse.rs
 │   │   ├── spike.rs
 │   │   ├── event.rs
 │   │   └── network.rs
+│   ├── compute/              # numerische Grenze, zunächst CPU
+│   │   ├── mod.rs
+│   │   ├── backend.rs
+│   │   ├── cpu.rs
+│   │   ├── dense.rs
+│   │   ├── inputs.rs
+│   │   ├── cuda.rs           # optionaler, synchroner CUDA-Prototyp
+│   │   └── cuda_kernel.cu
 │   ├── runtime/
 │   │   ├── mod.rs
 │   │   ├── scheduler.rs
 │   │   ├── simulation.rs
 │   │   ├── propagation.rs
+│   │   ├── profile.rs
 │   │   └── event_batch.rs
 │   ├── learning/
 │   │   ├── mod.rs
@@ -283,6 +293,28 @@ Eine Synapse enthält mindestens:
 
 Die Runtime besitzt eine nach Zeit sortierte Ereigniswarteschlange. Ereignisse werden nach `(timestamp, insertion_sequence)` deterministisch geordnet.
 
+Numerisches Fortschreiben und die kanonische Aggregation/Integration der
+Neuroneneingänge liegen hinter `compute::ComputeBackend`, standardmäßig in
+`CpuCompute`. Die getrennten synchronen Aufrufe erhalten die Reihenfolge
+`advance → Prä-STDP/Ankünfte → integrate → Post-STDP/Utility → Wartung →
+Propagation → Vorhersagen`. Die Runtime behält Validierung, Batch-Rollen,
+Scheduler, Lern-Hooks, Topologieänderungen und Beobachtungen. `compute` kennt
+nur die unteren Schichten und erhält `DenseNeuronBatch` mit zusammenhängenden
+Zustands- und Parameterdatensätzen sowie `FlatNeuronInputs` mit ID-, Offset- und
+Amplitudenlisten. Es erhält keine Neuronenobjekte oder Topologiemethoden.
+Die gemeinsamen numerischen Kernel und Datentypen liegen in `core::dynamics`;
+`core` kennt weiterhin kein Backend. Die Runtime exportiert den aktuellen
+Zustand und veröffentlicht Ergebnisse vor den jeweils folgenden Lern-Hooks.
+`Network` bleibt autoritativ und unverändert als sparsamer Graph. Opt-in
+`RuntimeProfile` misst Arbeitsmengen und Hostzeiten ohne Einfluss auf den
+Eventstrom. Das optionale `cuda`-Feature ergänzt einen synchronen
+`CudaCompute`-Prototyp mit feldweise gepackten Device-Arrays und neuen Puffern
+pro Aufruf. CPU bleibt die bitgenaue Referenz; GPU-Vergleiche verwenden
+deklarierte Zustandstoleranzen und exakte diskrete Erwartungen. Ein dichter
+Synapsengraph, persistenter VRAM-Zustand und GPU-STDP bleiben spätere Schritte.
+Die aktuelle CPU-Extraktion wird gegen vorab aufgezeichnete Zustands- und
+Beobachtungsdaten geprüft. Details stehen in `docs/architecture.md`.
+
 Alle Ereignisse mit exakt demselben Zeitstempel werden als Batch behandelt:
 
 1. Betroffene Neuronen werden analytisch bis zur Ereigniszeit fortgeschrieben.
@@ -378,7 +410,13 @@ Geplante Roots sind:
 Die allgemeine Bibliothek stellt `SensoryRoot` und eine beobachtbare `MotorRoot`
 bereit. Auch M0 verwendet diese geräteneutralen Anschlussstellen.
 
-Eine Root besitzt Kanäle und verweist auf Nervenfasern. Sie setzt niemals direkt Membranpotentiale und kennt keine internen Synapsen.
+Eine Root deklariert Kanäle; `RootChannel` enthält nur `ChannelId`. Ausschließlich
+`nerves::Mapping` ordnet `(RootId, ChannelId)` einer `FiberId` zu. Die Fiber
+besitzt den neuronalen Endpunkt, Delay und Gain. Eine Root setzt niemals
+direkt Membranpotentiale und kennt keine internen Synapsen.
+Die Mapping-Methoden erhalten `&Root` und prüfen Kanalexistenz sowie
+Sensory-/Motor-Richtung vor der Zuordnung. Nicht deklarierte Kanäle und
+falsche Root-Richtungen werden ohne Änderung des Mappings abgelehnt.
 
 ### 6.7 `transduction`
 
@@ -393,6 +431,19 @@ neue Eingänge kann Zeit für Rate-Coding oder Motorzerfall verstreichen.
 
 Die direkten Implementierungen `DirectSensoryTransducer` und
 `DirectMotorTransducer` erhalten Kanal, Zeitstempel und positive Amplitude.
+`RateSensoryTransducer` integriert pro Kanal gehaltene Rezeptorwerte in Hertz
+und erzeugt deterministische Spikes der Amplitude `1.0`. Ratewechsel erhalten
+die Teilphase; null Hertz pausiert sie. Endliche Raten von 0 bis 1.000.000 Hz
+werden unterstützt. Die analytischen Spike-Zeitpunkte werden auf ganze
+Mikrosekunden aufgerundet und bleiben unabhängig von der Aufteilung der
+Advance-Horizonte. Dafür ist kein globaler Tick erforderlich.
+`PoissonSensoryTransducer::new(seed)` ergänzt stochastische Spike-Züge aus
+gehaltenen Hertz-Werten. Unabhängige, reproduzierbare SplitMix64-Ströme pro
+Kanal liefern exponentielle Wartehazards. Ratewechsel erhalten den
+ausstehenden Hazard, null Hertz pausiert ihn. Gleicher Seed und gleiche
+Eingänge ergeben unabhängig von den Advance-Horizonten gleiche Spike-Zeiten.
+Die Rundung auf Mikrosekunden kann mehrere Ankünfte auf denselben Zeitstempel
+abbilden; diese Spikes bleiben einzeln erhalten.
 
 Für das M0-Experiment ordnet `experiment::m0::PatternEncoder` jedem Muster `A`,
 `B`, `C` und `D` eine feste, dünn besetzte Gruppe sensorischer Fasern zu. Die
@@ -507,6 +558,8 @@ flowchart TD
     C --> N["nerves"]
     I --> N
     C --> R["runtime"]
+    C --> K["compute"]
+    K --> R
     L --> R
     N --> R
     R --> O["metrics + debug"]
@@ -518,6 +571,8 @@ flowchart TD
 Wichtige Verbote:
 
 - `core` importiert weder `learning` noch `runtime`.
+- `compute` importiert weder `runtime`, `learning`, I/O noch `development`;
+  numerische Arbeit bekommt stabile IDs und den aktuellen Zellzustand.
 - `learning` importiert keine Umgebung, Roots oder Metriken.
 - `roots` kennen keine konkrete Netzwerkstruktur.
 - `metrics`, `debug` und `visualization` werden niemals von Core oder Learning aufgerufen, um Entscheidungen zu treffen.

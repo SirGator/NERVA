@@ -4,13 +4,13 @@ use std::{error::Error, fmt};
 
 use crate::{
     config::{ConfigError, NeuronConfig},
-    math::{Position3D, PositionError, decay_to_zero, decay_towards},
+    math::{Position3D, PositionError, decay_to_zero},
     primitives::{SignalStrength, Weight},
 };
 
 use super::{
     IntrinsicState, NeuronId, SimTime, Spike,
-    intrinsic::{IntrinsicGapModel, exponential_current_response},
+    dynamics::{NeuronDynamicsParams, NeuronDynamicsState, checked_effective_sum},
 };
 
 /// Sign contributed by every outgoing synapse of a neuron.
@@ -135,6 +135,74 @@ impl Neuron {
             structural_drive: 0.0,
             last_homeostasis_update: start_time,
         })
+    }
+
+    /// Exports a complete numerical copy without identity or graph metadata.
+    pub fn numerical_state(&self) -> NeuronDynamicsState {
+        NeuronDynamicsState {
+            membrane_potential: self.membrane_potential,
+            last_update: self.last_update,
+            refractory_until: self.refractory_until,
+            activity_trace: self.activity_trace,
+            input_trace: self.input_trace,
+            last_spike_time: self.last_spike.map_or(0, SimTime::as_micros),
+            last_spike_valid: u32::from(self.last_spike.is_some()),
+            spike_count: self.spike_count,
+            threshold: self.threshold,
+            burst_drive: self.burst_drive,
+            adaptation_drive: self.adaptation_drive,
+            rebound_drive: self.rebound_drive,
+            threshold_adaptation: self.threshold_adaptation,
+            intrinsic_current: self.intrinsic_current,
+            structural_drive: self.structural_drive,
+            last_homeostasis_update: self.last_homeostasis_update,
+        }
+    }
+
+    /// Exports immutable flattened numerical parameters.
+    pub fn numerical_params(&self) -> NeuronDynamicsParams {
+        (&self.params).into()
+    }
+
+    /// Validates and publishes numerical state without changing identity,
+    /// position, polarity, role or immutable configuration.
+    pub fn apply_numerical_state(&mut self, state: NeuronDynamicsState) -> Result<(), NeuronError> {
+        self.validate_numerical_state(&state)?;
+        self.set_numerical_state_unchecked(state);
+        Ok(())
+    }
+
+    pub(crate) fn validate_numerical_state(
+        &self,
+        state: &NeuronDynamicsState,
+    ) -> Result<(), NeuronError> {
+        state.validate(&self.numerical_params())?;
+        if state.last_update < self.last_update {
+            return Err(NeuronError::TimeWentBackwards {
+                current: self.last_update,
+                requested: state.last_update,
+            });
+        }
+        Ok(())
+    }
+
+    // Batch failures preserve the original partial numerical state before poisoning.
+    pub(crate) fn set_numerical_state_unchecked(&mut self, state: NeuronDynamicsState) {
+        self.membrane_potential = state.membrane_potential;
+        self.last_update = state.last_update;
+        self.refractory_until = state.refractory_until;
+        self.activity_trace = state.activity_trace;
+        self.input_trace = state.input_trace;
+        self.spike_count = state.spike_count;
+        self.threshold = state.threshold;
+        self.burst_drive = state.burst_drive;
+        self.adaptation_drive = state.adaptation_drive;
+        self.rebound_drive = state.rebound_drive;
+        self.threshold_adaptation = state.threshold_adaptation;
+        self.intrinsic_current = state.intrinsic_current;
+        self.structural_drive = state.structural_drive;
+        self.last_homeostasis_update = state.last_homeostasis_update;
+        self.last_spike = (state.last_spike_valid == 1).then_some(SimTime(state.last_spike_time));
     }
 
     /// Stable identity of this neuron.
@@ -272,88 +340,10 @@ impl Neuron {
     /// this once or through many unrelated event timestamps gives the same
     /// membrane potential at the same final time.
     pub fn advance_to(&mut self, time: SimTime) -> Result<(), NeuronError> {
-        let elapsed_us =
-            time.duration_since(self.last_update)
-                .ok_or(NeuronError::TimeWentBackwards {
-                    current: self.last_update,
-                    requested: time,
-                })?;
-
-        if elapsed_us == 0 {
-            return Ok(());
-        }
-
-        if !self.params.intrinsic.is_active() {
-            // Preserve the original f32 LIF path bit-for-bit when all new
-            // capabilities use their backward-compatible defaults.
-            let intrinsic_equilibrium = self.params.resting_potential
-                + self.intrinsic_current * (self.params.membrane_tau_us / 1_000_000.0);
-            if !intrinsic_equilibrium.is_finite() {
-                return Err(NeuronError::NonFiniteIntrinsicEquilibrium(
-                    intrinsic_equilibrium,
-                ));
-            }
-            self.membrane_potential = decay_towards(
-                self.membrane_potential,
-                intrinsic_equilibrium,
-                elapsed_us,
-                self.params.membrane_tau_us,
-            );
-        } else {
-            let intrinsic_equilibrium = self.constant_intrinsic_equilibrium();
-            if !intrinsic_equilibrium.is_finite()
-                || intrinsic_equilibrium.abs() > f64::from(f32::MAX)
-            {
-                return Err(NeuronError::NonFiniteIntrinsicEquilibrium(
-                    intrinsic_equilibrium as f32,
-                ));
-            }
-            let next_potential = self.projected_membrane_potential(elapsed_us);
-            if !next_potential.is_finite() || next_potential.abs() > f64::from(f32::MAX) {
-                return Err(NeuronError::NonFiniteMembranePotential(
-                    next_potential as f32,
-                ));
-            }
-            self.membrane_potential = next_potential as f32;
-        }
-        if !self.membrane_potential.is_finite() {
-            return Err(NeuronError::NonFiniteMembranePotential(
-                self.membrane_potential,
-            ));
-        }
-        self.burst_drive = decay_to_zero(
-            self.burst_drive,
-            elapsed_us,
-            self.params.intrinsic.burst_tau_us,
-        );
-        self.adaptation_drive = decay_to_zero(
-            self.adaptation_drive,
-            elapsed_us,
-            self.params.intrinsic.adaptation_tau_us,
-        );
-        self.rebound_drive = decay_to_zero(
-            self.rebound_drive,
-            elapsed_us,
-            self.params.intrinsic.rebound_tau_us,
-        );
-        self.threshold_adaptation = decay_to_zero(
-            self.threshold_adaptation,
-            elapsed_us,
-            self.params.intrinsic.threshold_adaptation_tau_us,
-        );
-        self.activity_trace = decay_to_zero(
-            self.activity_trace,
-            elapsed_us,
-            self.params.activity_trace_tau_us,
-        );
-        self.input_trace = decay_to_zero(
-            self.input_trace,
-            elapsed_us,
-            self.params.activity_trace_tau_us,
-        );
-        self.last_update = time;
-
-        Ok(())
+        let mut state = self.numerical_state();
+        let result = state.advance_to(&self.numerical_params(), time);
+        self.set_numerical_state_unchecked(state);
+        result
     }
 
     /// Applies one already-aggregated exact-timestamp input and checks firing
@@ -413,68 +403,16 @@ impl Neuron {
         input_magnitude: f32,
         inhibitory_input_magnitude: f32,
     ) -> Result<Option<Spike>, NeuronError> {
-        validate_input_summary(summed_input, input_magnitude, inhibitory_input_magnitude)?;
-
-        self.advance_to(time)?;
-        self.observe_input(input_magnitude);
-        if self.is_refractory_at(time) {
-            return Ok(None);
-        }
-
-        let next_potential = self.membrane_potential + summed_input;
-        if !next_potential.is_finite() {
-            return Err(NeuronError::NonFiniteMembranePotential(next_potential));
-        }
-        if next_potential < self.threshold() {
-            let rebound_drive = checked_intrinsic_sum(
-                "rebound_drive",
-                self.rebound_drive,
-                self.params.intrinsic.rebound_gain * inhibitory_input_magnitude,
-            )?;
-            self.membrane_potential = next_potential;
-            self.rebound_drive = rebound_drive;
-            return Ok(None);
-        }
-
-        let refractory_until = time
-            .checked_add_us(self.params.refractory_period_us)
-            .ok_or(NeuronError::RefractoryTimeOverflow {
-                spike_time: time,
-                refractory_period_us: self.params.refractory_period_us,
-            })?;
-        let burst_drive = checked_intrinsic_sum(
-            "burst_drive",
-            self.burst_drive,
-            self.params.intrinsic.burst_gain,
-        )?;
-        let adaptation_drive = checked_intrinsic_sum(
-            "adaptation_drive",
-            self.adaptation_drive,
-            self.params.intrinsic.adaptation_gain,
-        )?;
-        let threshold_adaptation = checked_intrinsic_sum(
-            "threshold_adaptation",
-            self.threshold_adaptation,
-            self.params.intrinsic.threshold_adaptation_gain,
-        )?;
-        checked_effective_sum("effective_threshold", self.threshold, threshold_adaptation)?;
-        let rebound_drive = checked_intrinsic_sum(
-            "rebound_drive",
-            self.rebound_drive,
-            self.params.intrinsic.rebound_gain * inhibitory_input_magnitude,
-        )?;
-
-        self.membrane_potential = self.params.reset_potential;
-        self.refractory_until = refractory_until;
-        self.burst_drive = burst_drive;
-        self.adaptation_drive = adaptation_drive;
-        self.threshold_adaptation = threshold_adaptation;
-        self.rebound_drive = rebound_drive;
-        self.activity_trace += 1.0;
-        self.last_spike = Some(time);
-        self.spike_count = self.spike_count.saturating_add(1);
-
-        Ok(Some(Spike::new(self.id, time)))
+        let mut state = self.numerical_state();
+        let result = state.integrate_input_with_components(
+            &self.numerical_params(),
+            time,
+            summed_input,
+            input_magnitude,
+            inhibitory_input_magnitude,
+        );
+        self.set_numerical_state_unchecked(state);
+        result.map(|fired| fired.then(|| Spike::new(self.id, time)))
     }
 
     /// Alias matching batch-oriented runtime terminology.
@@ -619,290 +557,8 @@ impl Neuron {
     /// actual integration. This creates local future events without a global
     /// tick or a fixed prediction horizon.
     pub fn predicted_intrinsic_spike_at(&self, now: SimTime) -> Option<SimTime> {
-        if now != self.last_update
-            || (!self.is_refractory_at(now) && self.membrane_potential >= self.threshold())
-        {
-            return None;
-        }
-
-        if !self.params.intrinsic.is_active() {
-            return self.predict_legacy_constant_drive_crossing(now);
-        }
-
-        let max_elapsed =
-            (u64::MAX - now.as_micros()).checked_sub(self.params.refractory_period_us)?;
-        if max_elapsed == 0 {
-            return None;
-        }
-        let refractory_elapsed = self
-            .refractory_until
-            .duration_since(now)
-            .unwrap_or(0)
-            .min(max_elapsed);
-        let first_eligible = refractory_elapsed.max(1);
-
-        if first_eligible > max_elapsed {
-            return None;
-        }
-        if self.projected_will_fire(first_eligible) {
-            return now.checked_add_us(first_eligible);
-        }
-
-        if !self.has_transient_intrinsic_state() {
-            return self.predict_constant_drive_crossing(now, first_eligible);
-        }
-
-        let model = self.intrinsic_gap_model();
-        let mut interval_start = first_eligible.saturating_add(1);
-        let mut interval_width = 1_u64;
-        loop {
-            if interval_start > max_elapsed {
-                return None;
-            }
-            let interval_end = interval_start
-                .saturating_add(interval_width.saturating_sub(1))
-                .min(max_elapsed);
-            if let Some(crossing) =
-                self.first_crossing_in_interval(&model, interval_start, interval_end)
-            {
-                return now.checked_add_us(crossing);
-            }
-            if interval_end == max_elapsed {
-                return None;
-            }
-            let next_start = interval_end + 1;
-            if model.tail_is_strictly_negative(next_start) {
-                return None;
-            }
-            interval_start = next_start;
-            interval_width = interval_width.saturating_mul(2);
-        }
-    }
-
-    fn observe_input(&mut self, input_magnitude: f32) {
-        // Input history is a diagnostic/homeostatic estimate. Saturating it
-        // preserves valid membrane dynamics even for an extreme but finite
-        // simultaneous batch such as `MAX + -MAX`.
-        self.input_trace = ((f64::from(self.input_trace) + f64::from(input_magnitude))
-            .min(f64::from(f32::MAX))) as f32;
-    }
-
-    fn projected_membrane_potential(&self, elapsed_us: u64) -> f64 {
-        let elapsed_seconds = elapsed_us as f64 / 1_000_000.0;
-        let membrane_tau_seconds = f64::from(self.params.membrane_tau_us) / 1_000_000.0;
-        let resting = f64::from(self.params.resting_potential);
-        let constant_current =
-            f64::from(self.params.intrinsic.intrinsic_drive) + f64::from(self.intrinsic_current);
-        let equilibrium = resting + constant_current * membrane_tau_seconds;
-        let membrane_decay = (-elapsed_seconds / membrane_tau_seconds).exp();
-        let mut potential =
-            equilibrium + (f64::from(self.membrane_potential) - equilibrium) * membrane_decay;
-
-        potential += exponential_current_response(
-            self.burst_drive,
-            self.params.intrinsic.burst_tau_us,
-            self.params.membrane_tau_us,
-            elapsed_us,
-        );
-        potential -= exponential_current_response(
-            self.adaptation_drive,
-            self.params.intrinsic.adaptation_tau_us,
-            self.params.membrane_tau_us,
-            elapsed_us,
-        );
-        potential += exponential_current_response(
-            self.rebound_drive,
-            self.params.intrinsic.rebound_tau_us,
-            self.params.membrane_tau_us,
-            elapsed_us,
-        );
-        potential
-    }
-
-    fn projected_will_fire(&self, elapsed_us: u64) -> bool {
-        let potential = self.projected_membrane_potential(elapsed_us) as f32;
-        let threshold = self.threshold
-            + decay_to_zero(
-                self.threshold_adaptation,
-                elapsed_us,
-                self.params.intrinsic.threshold_adaptation_tau_us,
-            );
-        potential.is_finite() && threshold.is_finite() && potential >= threshold
-    }
-
-    fn has_transient_intrinsic_state(&self) -> bool {
-        self.burst_drive != 0.0
-            || self.adaptation_drive != 0.0
-            || self.rebound_drive != 0.0
-            || self.threshold_adaptation != 0.0
-    }
-
-    fn constant_intrinsic_equilibrium(&self) -> f64 {
-        f64::from(self.params.resting_potential)
-            + (f64::from(self.params.intrinsic.intrinsic_drive) + f64::from(self.intrinsic_current))
-                * f64::from(self.params.membrane_tau_us)
-                / 1_000_000.0
-    }
-
-    fn predict_constant_drive_crossing(
-        &self,
-        now: SimTime,
-        first_eligible: u64,
-    ) -> Option<SimTime> {
-        let equilibrium = self.constant_intrinsic_equilibrium();
-        if !equilibrium.is_finite() || equilibrium <= f64::from(self.threshold) {
-            return None;
-        }
-
-        let numerator = f64::from(self.threshold) - equilibrium;
-        let denominator = f64::from(self.membrane_potential) - equilibrium;
-        let ratio = numerator / denominator;
-        if !(0.0..1.0).contains(&ratio) {
-            return None;
-        }
-        let elapsed_us = (-f64::from(self.params.membrane_tau_us) * ratio.ln()).ceil();
-        if !elapsed_us.is_finite() || elapsed_us > (u64::MAX - now.as_micros()) as f64 {
-            return None;
-        }
-        now.checked_add_us((elapsed_us as u64).max(first_eligible))
-    }
-
-    fn predict_legacy_constant_drive_crossing(&self, now: SimTime) -> Option<SimTime> {
-        let tau_seconds = self.params.membrane_tau_us / 1_000_000.0;
-        let equilibrium = self.params.resting_potential + self.intrinsic_current * tau_seconds;
-        if !equilibrium.is_finite() || equilibrium <= self.threshold {
-            return None;
-        }
-
-        let ratio = (self.threshold - equilibrium) / (self.membrane_potential - equilibrium);
-        if !(0.0..1.0).contains(&ratio) {
-            return None;
-        }
-        let elapsed_us = (-self.params.membrane_tau_us * ratio.ln()).ceil();
-        if !elapsed_us.is_finite() || elapsed_us > u64::MAX as f32 {
-            return None;
-        }
-        let crossing = now.checked_add_us((elapsed_us as u64).max(1))?;
-        Some(crossing.max(self.refractory_until))
-    }
-
-    fn intrinsic_gap_model(&self) -> IntrinsicGapModel {
-        let equilibrium = self.constant_intrinsic_equilibrium();
-        let mut model = IntrinsicGapModel::new(equilibrium - f64::from(self.threshold));
-        model.add_term(
-            self.params.membrane_tau_us,
-            f64::from(self.membrane_potential) - equilibrium,
-            0.0,
-        );
-        model.add_current_response(
-            self.burst_drive,
-            self.params.intrinsic.burst_tau_us,
-            self.params.membrane_tau_us,
-            1.0,
-        );
-        model.add_current_response(
-            self.adaptation_drive,
-            self.params.intrinsic.adaptation_tau_us,
-            self.params.membrane_tau_us,
-            -1.0,
-        );
-        model.add_current_response(
-            self.rebound_drive,
-            self.params.intrinsic.rebound_tau_us,
-            self.params.membrane_tau_us,
-            1.0,
-        );
-        model.add_term(
-            self.params.intrinsic.threshold_adaptation_tau_us,
-            -f64::from(self.threshold_adaptation),
-            0.0,
-        );
-        model.remove_zero_terms();
-        model
-    }
-
-    fn first_crossing_in_interval(
-        &self,
-        model: &IntrinsicGapModel,
-        start: u64,
-        end: u64,
-    ) -> Option<u64> {
-        if self.projected_will_fire(start) {
-            return Some(start);
-        }
-        if start == end {
-            return None;
-        }
-
-        let gap_range = model.range(start, end);
-        if gap_range.upper < -gap_range.rounding_margin() {
-            return None;
-        }
-
-        let derivative_range = model.derivative_range(start, end);
-        if derivative_range.upper < -derivative_range.rounding_margin() {
-            return None;
-        }
-        if derivative_range.lower > derivative_range.rounding_margin()
-            && !self.projected_will_fire(end)
-        {
-            return None;
-        }
-
-        let midpoint = start + (end - start) / 2;
-        self.first_crossing_in_interval(model, start, midpoint)
-            .or_else(|| self.first_crossing_in_interval(model, midpoint + 1, end))
-    }
-}
-
-fn validate_input_summary(
-    summed_input: f32,
-    input_magnitude: f32,
-    inhibitory_input_magnitude: f32,
-) -> Result<(), NeuronError> {
-    if !summed_input.is_finite() {
-        return Err(NeuronError::NonFiniteInput(summed_input));
-    }
-    if !input_magnitude.is_finite() || input_magnitude < 0.0 {
-        return Err(NeuronError::InvalidInputMagnitude(input_magnitude));
-    }
-    if !inhibitory_input_magnitude.is_finite()
-        || inhibitory_input_magnitude < 0.0
-        || inhibitory_input_magnitude > input_magnitude
-    {
-        return Err(NeuronError::InvalidInhibitoryInputMagnitude {
-            inhibitory: inhibitory_input_magnitude,
-            total: input_magnitude,
-        });
-    }
-    Ok(())
-}
-
-fn checked_intrinsic_sum(
-    field: &'static str,
-    current: f32,
-    increment: f32,
-) -> Result<f32, NeuronError> {
-    let next = f64::from(current) + f64::from(increment);
-    if !next.is_finite() || next > f64::from(f32::MAX) || next < f64::from(f32::MIN) {
-        Err(NeuronError::NonFiniteIntrinsicState {
-            field,
-            value: next as f32,
-        })
-    } else {
-        Ok(next as f32)
-    }
-}
-
-fn checked_effective_sum(field: &'static str, left: f32, right: f32) -> Result<f32, NeuronError> {
-    let value = f64::from(left) + f64::from(right);
-    if !value.is_finite() || value.abs() > f64::from(f32::MAX) {
-        Err(NeuronError::NonFiniteIntrinsicState {
-            field,
-            value: value as f32,
-        })
-    } else {
-        Ok(value as f32)
+        self.numerical_state()
+            .predicted_intrinsic_spike_at(&self.numerical_params(), now)
     }
 }
 
@@ -938,6 +594,8 @@ fn validate_clamped_homeostatic_value(
 /// Invalid construction or temporal evolution of a neuron.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NeuronError {
+    /// Imported numerical state violated a local invariant.
+    InvalidNumericalState { field: &'static str },
     /// Invalid immutable LIF parameters.
     InvalidConfig(ConfigError),
     /// Invalid geometric coordinate.
@@ -1012,6 +670,9 @@ pub enum NeuronError {
 impl fmt::Display for NeuronError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidNumericalState { field } => {
+                write!(formatter, "invalid numerical neuron state: {field}")
+            }
             Self::InvalidConfig(error) => {
                 write!(formatter, "invalid neuron configuration: {error}")
             }
@@ -1095,7 +756,7 @@ impl Error for NeuronError {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::IntrinsicDynamicsConfig;
+    use crate::{config::IntrinsicDynamicsConfig, math::decay_towards};
 
     use super::*;
 
@@ -1508,7 +1169,11 @@ mod tests {
                 .integrate_input_with_components(SimTime::ZERO, 1.0, 3.0, 1.0)
                 .unwrap();
             let brute_force = (25..=200_000_u64)
-                .find(|elapsed| neuron.projected_will_fire(*elapsed))
+                .find(|elapsed| {
+                    neuron
+                        .numerical_state()
+                        .projected_will_fire(&neuron.numerical_params(), *elapsed)
+                })
                 .map(SimTime);
             let predicted = neuron.predicted_intrinsic_spike_at(SimTime::ZERO);
 

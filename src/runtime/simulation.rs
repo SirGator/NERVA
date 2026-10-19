@@ -1,12 +1,14 @@
-//! Single-threaded deterministic execution of exact-timestamp event batches.
+//! Deterministic orchestration of exact-timestamp batches and numerical compute.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
+    time::Instant,
 };
 
 use crate::{
+    compute::{ComputeBackend, ComputeError, CpuCompute, DenseNeuronBatch, FlatNeuronInputs},
     config::{ConfigError, HomeostasisConfig, NervaConfig, RuntimeConfig},
     core::{
         Event, EventKind, Network, NetworkError, Neuron, NeuronError, NeuronId, SimTime, Spike,
@@ -21,10 +23,11 @@ use crate::{
 };
 
 use super::{
-    event_batch::EventBatch,
+    event_batch::{EventBatch, ScheduledEvent},
     homeostasis_booking::{HomeostasisBooking, HomeostasisBookings},
     intrinsic_booking::{IntrinsicBooking, IntrinsicBookings},
-    propagation::{PropagationError, plan_spike_propagation},
+    profile::{ProfilePhase, RuntimeProfile},
+    propagation::{PropagationError, plan_spike_propagation_into},
     scheduler::{EventScheduler, SchedulerError},
 };
 
@@ -167,6 +170,8 @@ pub enum SimulationError {
     Propagation(PropagationError),
     /// A neuron rejected time evolution or integration.
     Neuron(NeuronError),
+    /// Dense numerical data or synchronization violated the compute contract.
+    Compute(ComputeError),
     /// Local homeostasis rejected an update.
     Homeostasis(HomeostasisError),
     /// `run` has no natural end while local clocks or autonomous firing are active.
@@ -246,6 +251,7 @@ impl fmt::Display for SimulationError {
             Self::Scheduler(error) => write!(formatter, "scheduler error: {error}"),
             Self::Propagation(error) => write!(formatter, "propagation error: {error}"),
             Self::Neuron(error) => write!(formatter, "neuron runtime error: {error}"),
+            Self::Compute(error) => write!(formatter, "compute error: {error}"),
             Self::Homeostasis(error) => write!(formatter, "homeostasis error: {error:?}"),
             Self::RunRequiresDeadline => formatter.write_str(
                 "local clocks or autonomous firing are active; use run_until with an explicit horizon",
@@ -313,6 +319,7 @@ impl Error for SimulationError {
             Self::Scheduler(error) => Some(error),
             Self::Propagation(error) => Some(error),
             Self::Neuron(error) => Some(error),
+            Self::Compute(error) => Some(error),
             Self::InvalidNetworkMutation(error) => Some(error),
             _ => None,
         }
@@ -337,13 +344,43 @@ impl From<NeuronError> for SimulationError {
     }
 }
 
+/// Runtime-only roles collected before any numerical mutation.
+struct BatchNeurons {
+    affected: Vec<NeuronId>,
+    maintenance: BTreeSet<NeuronId>,
+    due_intrinsic: BTreeSet<NeuronId>,
+}
+
+impl From<ComputeError> for SimulationError {
+    fn from(error: ComputeError) -> Self {
+        match error {
+            error @ (ComputeError::InvalidBatch { .. } | ComputeError::Backend { .. }) => {
+                Self::Compute(error)
+            }
+            ComputeError::UnknownNeuron(id) => Self::UnknownNeuron(id),
+            ComputeError::Neuron(error) => Self::Neuron(error),
+            ComputeError::NonFiniteInput { target, amplitude } => {
+                Self::NonFiniteInput { target, amplitude }
+            }
+            ComputeError::NonFiniteSummedInput { target } => Self::NonFiniteSummedInput { target },
+            ComputeError::NonFiniteInputMagnitude { target } => {
+                Self::NonFiniteInputMagnitude { target }
+            }
+        }
+    }
+}
+
 impl From<HomeostasisError> for SimulationError {
     fn from(error: HomeostasisError) -> Self {
         Self::Homeostasis(error)
     }
 }
 
-/// Single-threaded event runtime parameterized by one local plasticity rule.
+/// Deterministic event orchestration parameterized by one local plasticity rule.
+///
+/// Numerical cell advancement and input integration use a synchronous
+/// [`ComputeBackend`], defaulting to [`CpuCompute`]. Scheduling, graph edits,
+/// learning hooks, observations and local-clock bookings remain runtime-owned.
 ///
 /// The utility evidence rule is held as a trait object (`Box<dyn UtilityRule>`)
 /// so that the second concern does not propagate as a second generic parameter
@@ -351,9 +388,13 @@ impl From<HomeostasisError> for SimulationError {
 /// utility memory of every synapse untouched.
 pub struct Simulation<R: PlasticityRule> {
     network: Network,
+    compute: Box<dyn ComputeBackend>,
+    profile: Option<RuntimeProfile>,
     plasticity_rule: R,
     utility_rule: Box<dyn UtilityRule>,
     homeostasis: LocalHomeostasis,
+    /// None preserves the default: every neuron receives local maintenance.
+    homeostasis_population: Option<BTreeSet<NeuronId>>,
     scheduler: EventScheduler<EventKind>,
     /// Scheduler bookkeeping intentionally lives in the runtime rather than
     /// in core neuron state.
@@ -413,9 +454,12 @@ impl<R: PlasticityRule> Simulation<R> {
 
         let mut simulation = Self {
             network,
+            compute: Box::new(CpuCompute),
+            profile: None,
             plasticity_rule,
             utility_rule,
             homeostasis: LocalHomeostasis::new(&HomeostasisConfig::default()),
+            homeostasis_population: None,
             scheduler: EventScheduler::new(),
             homeostasis_bookings: HomeostasisBookings::default(),
             intrinsic_bookings: IntrinsicBookings::default(),
@@ -428,6 +472,51 @@ impl<R: PlasticityRule> Simulation<R> {
         };
         simulation.refresh_all_intrinsic_spikes()?;
         Ok(simulation)
+    }
+
+    /// Selects a synchronous numerical backend; constructors default to CpuCompute.
+    ///
+    /// The network remains authoritative. The backend receives only exported
+    /// numerical records and flat inputs; the runtime publishes results before
+    /// learning hooks and retains event ordering and scheduling.
+    pub fn with_compute_backend(mut self, backend: impl ComputeBackend + 'static) -> Self {
+        self.compute = Box::new(backend);
+        self
+    }
+
+    /// Enables bounded host profiling without changing the event stream.
+    /// Disabled by default; no wall-clock reads occur while disabled.
+    pub fn with_profiling(mut self) -> Self {
+        self.enable_profiling();
+        self
+    }
+
+    /// Starts profiling if it is not already active, retaining existing samples.
+    pub fn enable_profiling(&mut self) {
+        self.profile.get_or_insert_with(RuntimeProfile::default);
+    }
+
+    /// Read-only host diagnostics, separate from deterministic observations.
+    pub fn profile(&self) -> Option<&RuntimeProfile> {
+        self.profile.as_ref()
+    }
+
+    /// Returns the current diagnostics and disables further measurement.
+    pub fn take_profile(&mut self) -> Option<RuntimeProfile> {
+        self.profile.take()
+    }
+
+    fn measure<T, E>(
+        &mut self,
+        phase: ProfilePhase,
+        operation: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let started = self.profile.as_ref().map(|_| Instant::now());
+        let result = operation(self);
+        if let (Some(started), Some(profile)) = (started, &mut self.profile) {
+            profile.record_phase(phase, started.elapsed(), result.is_err());
+        }
+        result
     }
 
     /// Sets the canonical utility dynamics parameters.
@@ -701,6 +790,7 @@ impl<R: PlasticityRule> Simulation<R> {
     ) -> Result<T, SimulationError> {
         let network = self.network.clone();
         let homeostasis = self.homeostasis.clone();
+        let homeostasis_population = self.homeostasis_population.clone();
         let scheduler = self.scheduler.clone();
         let homeostasis_bookings = self.homeostasis_bookings.clone();
         let intrinsic_bookings = self.intrinsic_bookings.clone();
@@ -709,6 +799,7 @@ impl<R: PlasticityRule> Simulation<R> {
             Err(error) => {
                 self.network = network;
                 self.homeostasis = homeostasis;
+                self.homeostasis_population = homeostasis_population;
                 self.scheduler = scheduler;
                 self.homeostasis_bookings = homeostasis_bookings;
                 self.intrinsic_bookings = intrinsic_bookings;
@@ -720,7 +811,7 @@ impl<R: PlasticityRule> Simulation<R> {
     fn integrate_new_neuron(&mut self, neuron_id: NeuronId) -> Result<(), SimulationError> {
         let now = self.current_time();
         self.refresh_intrinsic_spike(neuron_id, now)?;
-        if self.homeostasis.is_enabled() {
+        if self.homeostasis.is_enabled() && self.homeostasis_selects(neuron_id) {
             self.network
                 .neuron_mut(neuron_id)
                 .ok_or(SimulationError::UnknownNeuron(neuron_id))?
@@ -780,6 +871,29 @@ impl<R: PlasticityRule> Simulation<R> {
     /// Number of queued events.
     pub fn pending_event_count(&self) -> usize {
         self.scheduler.len()
+    }
+
+    /// Read-only comparison of runtime-owned replay state, including pending
+    /// events, local clocks and rule-owned STDP traces. Opaque compute backends
+    /// and utility-rule objects are excluded: callers must ensure identical,
+    /// stateless implementations. Profiling and observation logs are excluded.
+    pub fn same_replay_state(&self, other: &Self) -> bool
+    where
+        R: PartialEq,
+    {
+        self.poisoned.is_none()
+            && other.poisoned.is_none()
+            && self.network == other.network
+            && self.scheduler == other.scheduler
+            && self.plasticity_rule == other.plasticity_rule
+            && self.homeostasis == other.homeostasis
+            && self.homeostasis_population == other.homeostasis_population
+            && self.homeostasis_bookings == other.homeostasis_bookings
+            && self.intrinsic_bookings == other.intrinsic_bookings
+            && self.max_events_per_batch == other.max_events_per_batch
+            && self.distance_decay_length == other.distance_decay_length
+            && self.learning_enabled == other.learning_enabled
+            && self.utility_dynamics == other.utility_dynamics
     }
 
     /// Runtime-owned deadline of this neuron's recurring maintenance clock.
@@ -864,6 +978,49 @@ impl<R: PlasticityRule> Simulation<R> {
         self.homeostasis.is_enabled()
     }
 
+    /// Selects the cells maintained by the existing local rule. None means all;
+    /// an empty set means none. Excluded clocks are cancelled, newly included
+    /// cells start at the current time, and unknown IDs leave all state intact.
+    /// This selects a population; it does not alter the homeostatic rule.
+    pub fn set_homeostasis_population(
+        &mut self,
+        population: Option<BTreeSet<NeuronId>>,
+    ) -> Result<(), SimulationError> {
+        self.ensure_not_poisoned()?;
+        if let Some(ids) = &population {
+            for &id in ids {
+                if self.network.neuron(id).is_none() {
+                    return Err(SimulationError::UnknownNeuron(id));
+                }
+            }
+        }
+        self.transaction(|simulation| {
+            let previous = simulation.homeostasis_population.clone();
+            simulation.homeostasis_population = population;
+            let now = simulation.current_time();
+            for id in simulation.network.neuron_ids().collect::<Vec<_>>() {
+                if !simulation.homeostasis_selects(id) {
+                    if let Some(booking) = simulation.homeostasis_bookings.remove(id) {
+                        simulation.scheduler.cancel(booking.sequence);
+                    }
+                } else if previous.as_ref().is_some_and(|ids| !ids.contains(&id)) {
+                    simulation
+                        .network
+                        .neuron_mut(id)
+                        .unwrap()
+                        .reset_homeostasis_time_anchor(now)?;
+                }
+            }
+            simulation.start_homeostasis_clocks()
+        })
+    }
+
+    fn homeostasis_selects(&self, id: NeuronId) -> bool {
+        self.homeostasis_population
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&id))
+    }
+
     /// Schedules one trusted, validated core event.
     ///
     /// Kept crate-private so callers cannot forge synaptic arrivals. Public
@@ -919,6 +1076,9 @@ impl<R: PlasticityRule> Simulation<R> {
         }
         let neuron_ids: Vec<_> = self.network.neuron_ids().collect();
         for neuron_id in neuron_ids {
+            if !self.homeostasis_selects(neuron_id) {
+                continue;
+            }
             if self.homeostasis_bookings.get(neuron_id).is_some() {
                 continue;
             }
@@ -941,10 +1101,37 @@ impl<R: PlasticityRule> Simulation<R> {
     /// applied state may remain, and every further use is rejected.
     pub fn step(&mut self) -> Result<Option<BatchReport>, SimulationError> {
         self.ensure_not_poisoned()?;
-        let Some(batch) = self.scheduler.pop_next_batch(self.max_events_per_batch)? else {
+        let Some(batch) = self.measure(ProfilePhase::SchedulerDequeue, |simulation| {
+            simulation
+                .scheduler
+                .pop_next_batch(simulation.max_events_per_batch)
+        })?
+        else {
             return Ok(None);
         };
-        match self.process_batch(batch) {
+        if let Some(profile) = &mut self.profile {
+            profile.batches_started = profile.batches_started.saturating_add(1);
+            profile.scheduler_batch_size.observe(batch.len());
+            profile.synaptic_arrivals_per_timestamp.observe(
+                batch
+                    .events()
+                    .iter()
+                    .filter(|event| matches!(event.payload, EventKind::SynapticArrival { .. }))
+                    .count(),
+            );
+        }
+        let result = self.measure(ProfilePhase::Batch, |simulation| {
+            simulation.process_batch(batch)
+        });
+        if let Some(profile) = &mut self.profile {
+            if let Ok(report) = &result {
+                profile.batches_completed = profile.batches_completed.saturating_add(1);
+                profile.spikes_per_timestamp.observe(report.spikes_emitted);
+            } else {
+                profile.batches_failed = profile.batches_failed.saturating_add(1);
+            }
+        }
+        match result {
             Ok(report) => Ok(Some(report)),
             Err(error) => Err(self.poison(error)),
         }
@@ -1042,7 +1229,11 @@ impl<R: PlasticityRule> Simulation<R> {
 
     fn reset_homeostasis_time_anchors(&mut self) -> Result<(), SimulationError> {
         let now = self.current_time();
+        let population = self.homeostasis_population.as_ref();
         for neuron in self.network.neurons_mut() {
+            if population.is_some_and(|ids| !ids.contains(&neuron.id())) {
+                continue;
+            }
             neuron.reset_homeostasis_time_anchor(now)?;
         }
         Ok(())
@@ -1116,17 +1307,64 @@ impl<R: PlasticityRule> Simulation<R> {
     ) -> Result<BatchReport, SimulationError> {
         let time = batch.time();
         let events = batch.into_events();
+        self.validate_batch(&events)?;
+        let neurons = self.collect_batch_neurons(time, &events);
 
+        // Pre-arrival learning observes advanced cells before input integration.
+        if let Some(profile) = &mut self.profile {
+            profile.advance_batch_size.observe(neurons.affected.len());
+        }
+        let mut state = self.measure(ProfilePhase::AdvanceExport, |simulation| {
+            DenseNeuronBatch::from_network(&simulation.network, &neurons.affected)
+        })?;
+        let result = self.measure(ProfilePhase::AdvanceCompute, |simulation| {
+            simulation.compute.advance_neurons(&mut state, time)
+        });
+        self.measure(ProfilePhase::AdvancePublish, |simulation| {
+            state.complete(&mut simulation.network, result)
+        })?;
+        let inputs = self.measure(ProfilePhase::Arrivals, |simulation| {
+            simulation.process_arrivals(time, &events)
+        })?;
+        let spikes = self.integrate_batch_neurons(time, neurons.due_intrinsic, inputs)?;
+        self.record_batch_spikes(time, &spikes)?;
+        self.apply_batch_learning(&spikes)?;
+        self.measure(ProfilePhase::Maintenance, |simulation| {
+            simulation.maintain_batch_neurons(time, neurons.maintenance)
+        })?;
+        self.measure(ProfilePhase::Propagation, |simulation| {
+            simulation.propagate_batch_spikes(&spikes)
+        })?;
+        self.measure(ProfilePhase::Prediction, |simulation| {
+            simulation.refresh_batch_predictions(time, neurons.affected)
+        })?;
+
+        Ok(BatchReport {
+            time,
+            events_processed: events.len(),
+            spikes_emitted: spikes.len(),
+        })
+    }
+
+    fn validate_batch(&self, events: &[ScheduledEvent<EventKind>]) -> Result<(), SimulationError> {
         // Validate the whole batch before the first state mutation. This also
         // catches controlled network edits made after an event was scheduled.
-        for scheduled in &events {
+        for scheduled in events {
             self.validate_event(scheduled.payload)?;
         }
 
+        Ok(())
+    }
+
+    fn collect_batch_neurons(
+        &self,
+        time: SimTime,
+        events: &[ScheduledEvent<EventKind>],
+    ) -> BatchNeurons {
         let mut affected_neurons = BTreeSet::new();
         let mut maintenance_neurons = BTreeSet::new();
         let mut due_intrinsic_neurons = BTreeSet::new();
-        for scheduled in &events {
+        for scheduled in events {
             match scheduled.payload {
                 EventKind::ExternalInput { target, .. }
                 | EventKind::SynapticArrival { target, .. } => {
@@ -1148,16 +1386,20 @@ impl<R: PlasticityRule> Simulation<R> {
             }
         }
 
-        // Every affected neuron first reaches the shared timestamp analytically.
-        for neuron_id in affected_neurons.iter().copied() {
-            self.network
-                .neuron_mut(neuron_id)
-                .ok_or(SimulationError::UnknownNeuron(neuron_id))?
-                .advance_to(time)?;
+        BatchNeurons {
+            affected: affected_neurons.into_iter().collect(),
+            maintenance: maintenance_neurons,
+            due_intrinsic: due_intrinsic_neurons,
         }
+    }
 
+    fn process_arrivals(
+        &mut self,
+        time: SimTime,
+        events: &[ScheduledEvent<EventKind>],
+    ) -> Result<BTreeMap<NeuronId, Vec<f32>>, SimulationError> {
         let mut simultaneous_inputs = BTreeMap::<NeuronId, Vec<f32>>::new();
-        for scheduled in &events {
+        for scheduled in events {
             match scheduled.payload {
                 EventKind::ExternalInput { target, amplitude } => {
                     self.event_log.push(ObservationEvent::ExternalInput {
@@ -1193,15 +1435,12 @@ impl<R: PlasticityRule> Simulation<R> {
                         target,
                         amplitude,
                     });
-                    self.network
+                    let synapse = self
+                        .network
                         .synapse_mut(synapse_id)
-                        .ok_or(SimulationError::UnknownSynapse(synapse_id))?
-                        .record_transmission();
+                        .ok_or(SimulationError::UnknownSynapse(synapse_id))?;
+                    synapse.record_transmission();
 
-                    // Record utility eligibility `e_ij` for every plastic
-                    // synapse, independent of whether the STDP rule accepts
-                    // it. Structural utility must not depend on the concrete
-                    // plasticity rule.
                     // Record utility eligibility `e_ij` for every enabled
                     // synapse, independent of whether the STDP rule accepts
                     // it and independent of whether the synapse is weight-
@@ -1209,36 +1448,33 @@ impl<R: PlasticityRule> Simulation<R> {
                     // weight learning: even a non-plastic synapse may be
                     // structurally useful and should be eligible for
                     // utility-based pruning.
-                    if self.learning_enabled
-                        && self
-                            .network
-                            .synapse(synapse_id)
-                            .map(|s| s.is_enabled())
-                            .unwrap_or(false)
-                    {
-                        self.network
-                            .synapse_mut(synapse_id)
-                            .ok_or(SimulationError::UnknownSynapse(synapse_id))?
+                    if self.learning_enabled && synapse.is_enabled() {
+                        synapse
                             .record_utility_arrival(time, self.utility_dynamics.eligibility_tau_us)
                             .map_err(SimulationError::InvalidNetworkMutation)?;
                     }
 
                     if self.learning_enabled && accepted_by_rule {
-                        let post = self
-                            .network
-                            .neuron(target)
-                            .ok_or(SimulationError::UnknownNeuron(target))?
-                            .clone();
-                        let (old_weight, new_weight) = {
-                            let synapse = self
+                        self.measure(ProfilePhase::PreStdp, |simulation| {
+                            let post = simulation
                                 .network
-                                .synapse_mut(synapse_id)
-                                .ok_or(SimulationError::UnknownSynapse(synapse_id))?;
-                            let old_weight = synapse.weight();
-                            self.plasticity_rule.on_pre_arrival(synapse, &post, time);
-                            (old_weight, synapse.weight())
-                        };
-                        self.log_weight_change(time, synapse_id, old_weight, new_weight);
+                                .neuron(target)
+                                .ok_or(SimulationError::UnknownNeuron(target))?
+                                .clone();
+                            let (old_weight, new_weight) = {
+                                let synapse = simulation
+                                    .network
+                                    .synapse_mut(synapse_id)
+                                    .ok_or(SimulationError::UnknownSynapse(synapse_id))?;
+                                let old_weight = synapse.weight();
+                                simulation
+                                    .plasticity_rule
+                                    .on_pre_arrival(synapse, &post, time);
+                                (old_weight, synapse.weight())
+                            };
+                            simulation.log_weight_change(time, synapse_id, old_weight, new_weight);
+                            Ok::<_, SimulationError>(())
+                        })?;
                     }
 
                     collect_input(&mut simultaneous_inputs, target, amplitude);
@@ -1247,43 +1483,60 @@ impl<R: PlasticityRule> Simulation<R> {
             }
         }
 
-        // Target order and a canonical magnitude/value ordering make membrane
-        // integration independent of the insertion order of simultaneous
-        // arrivals, including floating-point rounding behavior.
-        let mut spikes = Vec::new();
-        let mut firing_candidates = due_intrinsic_neurons;
-        firing_candidates.extend(simultaneous_inputs.keys().copied());
-        for neuron_id in &firing_candidates {
-            if self.intrinsic_bookings.contains(*neuron_id, time) {
-                self.intrinsic_bookings.remove(*neuron_id);
-            }
-        }
-        for target in firing_candidates {
-            let input = simultaneous_inputs
-                .remove(&target)
-                .map(|inputs| canonical_input_summary(target, inputs))
-                .transpose()?
-                .unwrap_or(InputSummary {
-                    summed_input: 0.0,
-                    input_magnitude: 0.0,
-                    inhibitory_input_magnitude: 0.0,
-                });
-            if let Some(spike) = self
-                .network
-                .neuron_mut(target)
-                .ok_or(SimulationError::UnknownNeuron(target))?
-                .integrate_input_with_components(
-                    time,
-                    input.summed_input,
-                    input.input_magnitude,
-                    input.inhibitory_input_magnitude,
-                )?
-            {
-                spikes.push(spike);
-            }
-        }
+        Ok(simultaneous_inputs)
+    }
 
-        for &spike in &spikes {
+    fn integrate_batch_neurons(
+        &mut self,
+        time: SimTime,
+        mut firing_candidates: BTreeSet<NeuronId>,
+        mut simultaneous_inputs: BTreeMap<NeuronId, Vec<f32>>,
+    ) -> Result<Vec<Spike>, SimulationError> {
+        firing_candidates.extend(simultaneous_inputs.keys().copied());
+        for &neuron_id in &firing_candidates {
+            if self.intrinsic_bookings.contains(neuron_id, time) {
+                self.intrinsic_bookings.remove(neuron_id);
+            }
+        }
+        let (mut inputs, mut state) =
+            self.measure(ProfilePhase::IntegratePrepare, |simulation| {
+                let inputs =
+                    FlatNeuronInputs::from_rows(firing_candidates.into_iter().map(|neuron_id| {
+                        (
+                            neuron_id,
+                            simultaneous_inputs.remove(&neuron_id).unwrap_or_default(),
+                        )
+                    }))?;
+                let state =
+                    DenseNeuronBatch::from_network(&simulation.network, inputs.neuron_ids())?;
+                Ok::<_, ComputeError>((inputs, state))
+            })?;
+        if let Some(profile) = &mut self.profile {
+            profile
+                .integrate_batch_size
+                .observe(inputs.neuron_ids().len());
+            for offsets in inputs.offsets().windows(2) {
+                profile
+                    .inputs_per_neuron
+                    .observe((offsets[1] - offsets[0]) as usize);
+            }
+        }
+        let result = self.measure(ProfilePhase::IntegrateCompute, |simulation| {
+            simulation
+                .compute
+                .integrate_neurons(&mut state, &mut inputs, time)
+        });
+        Ok(self.measure(ProfilePhase::IntegratePublish, |simulation| {
+            state.complete(&mut simulation.network, result)
+        })?)
+    }
+
+    fn record_batch_spikes(
+        &mut self,
+        time: SimTime,
+        spikes: &[Spike],
+    ) -> Result<(), SimulationError> {
+        for &spike in spikes {
             self.event_log.push(ObservationEvent::SpikeEmitted(spike));
             let neuron = self
                 .network
@@ -1292,21 +1545,42 @@ impl<R: PlasticityRule> Simulation<R> {
             self.homeostasis.record_spike(neuron, time)?;
         }
 
+        Ok(())
+    }
+
+    fn apply_batch_learning(&mut self, spikes: &[Spike]) -> Result<(), SimulationError> {
         if self.learning_enabled {
-            for &spike in &spikes {
-                self.apply_post_spike_learning(spike)?;
-            }
-            for &spike in &spikes {
-                self.apply_post_spike_utility(spike)?;
-            }
+            self.measure(ProfilePhase::PostStdp, |simulation| {
+                for &spike in spikes {
+                    simulation.apply_post_spike_learning(spike)?;
+                }
+                Ok::<_, SimulationError>(())
+            })?;
+            self.measure(ProfilePhase::Utility, |simulation| {
+                for &spike in spikes {
+                    simulation.apply_post_spike_utility(spike)?;
+                }
+                Ok::<_, SimulationError>(())
+            })?;
         }
 
+        Ok(())
+    }
+
+    fn maintain_batch_neurons(
+        &mut self,
+        time: SimTime,
+        maintenance_neurons: BTreeSet<NeuronId>,
+    ) -> Result<(), SimulationError> {
         // Duplicate maintenance events for one cell and timestamp collapse into
         // one local update, just as duplicate arrivals collapse into one firing check.
         for neuron_id in maintenance_neurons {
             let is_recurring_clock = self.homeostasis_bookings.contains(neuron_id, time);
             if is_recurring_clock {
                 self.homeostasis_bookings.remove(neuron_id);
+            }
+            if !self.homeostasis_selects(neuron_id) {
+                continue;
             }
             let change = {
                 let neuron = self
@@ -1338,16 +1612,51 @@ impl<R: PlasticityRule> Simulation<R> {
             }
         }
 
+        Ok(())
+    }
+
+    fn propagate_batch_spikes(&mut self, spikes: &[Spike]) -> Result<(), SimulationError> {
         // Post hooks and maintenance finish before any outgoing weights are read.
         // Positive validated delays ensure these events cannot re-enter this batch.
-        for &spike in &spikes {
-            for transmission in
-                plan_spike_propagation(&self.network, spike, self.distance_decay_length)?
-            {
-                self.schedule_event(transmission.event)?;
+        let mut transmissions = Vec::new();
+        for &spike in spikes {
+            if let Some(profile) = &mut self.profile {
+                profile
+                    .outgoing_synapses_per_spike
+                    .observe(self.network.outgoing_synapse_ids(spike.neuron_id).len());
             }
+
+            self.measure(ProfilePhase::PropagationPlan, |simulation| {
+                plan_spike_propagation_into(
+                    &simulation.network,
+                    spike,
+                    simulation.distance_decay_length,
+                    &mut transmissions,
+                )
+            })?;
+            self.measure(ProfilePhase::PropagationEnqueue, |simulation| {
+                // The planner has checked endpoints and finite amplitudes;
+                // no topology or learning mutation occurs before insertion.
+                // Scheduler time/sequence checks remain authoritative, and
+                // arrivals are validated again when their batch is dequeued.
+                for transmission in &transmissions {
+                    simulation
+                        .scheduler
+                        .schedule(transmission.event.time, transmission.event.kind)
+                        .map_err(SimulationError::Scheduler)?;
+                }
+                Ok::<_, SimulationError>(())
+            })?;
         }
 
+        Ok(())
+    }
+
+    fn refresh_batch_predictions(
+        &mut self,
+        time: SimTime,
+        affected_neurons: Vec<NeuronId>,
+    ) -> Result<(), SimulationError> {
         // Input, spike reset, and maintenance can all change the next
         // autonomous crossing. Each affected neuron refreshes only its own
         // prediction and eagerly cancels a superseded queue entry.
@@ -1355,22 +1664,17 @@ impl<R: PlasticityRule> Simulation<R> {
             self.refresh_intrinsic_spike(neuron_id, time)?;
         }
 
-        Ok(BatchReport {
-            time,
-            events_processed: events.len(),
-            spikes_emitted: spikes.len(),
-        })
+        Ok(())
     }
 
     fn apply_post_spike_learning(&mut self, spike: Spike) -> Result<(), SimulationError> {
         let neuron = self
             .network
             .neuron(spike.neuron_id)
-            .ok_or(SimulationError::UnknownNeuron(spike.neuron_id))?
-            .clone();
-        let incoming_ids = self.network.incoming_synapse_ids(spike.neuron_id).to_vec();
-        let mut accepted_ids = Vec::new();
-        for synapse_id in incoming_ids {
+            .ok_or(SimulationError::UnknownNeuron(spike.neuron_id))?;
+        let mut originals = Vec::new();
+        let mut incoming = Vec::new();
+        for &synapse_id in self.network.incoming_synapse_ids(spike.neuron_id) {
             let synapse = self
                 .network
                 .synapse(synapse_id)
@@ -1381,27 +1685,20 @@ impl<R: PlasticityRule> Simulation<R> {
                 .ok_or(SimulationError::UnknownNeuron(synapse.pre()))?
                 .polarity();
             if self.plasticity_rule.accepts(synapse, polarity) {
-                accepted_ids.push(synapse_id);
+                originals.push((synapse_id, synapse.pre(), synapse.weight()));
+                incoming.push(synapse.clone());
             }
         }
 
-        let mut incoming = Vec::with_capacity(accepted_ids.len());
-        for &synapse_id in &accepted_ids {
-            incoming.push(
-                self.network
-                    .synapse(synapse_id)
-                    .ok_or(SimulationError::UnknownSynapse(synapse_id))?
-                    .clone(),
-            );
-        }
-        let old_weights: Vec<_> = incoming.iter().map(Synapse::weight).collect();
         self.plasticity_rule
-            .on_post_spike(&neuron, &mut incoming, spike.time);
+            .on_post_spike(neuron, &mut incoming, spike.time);
 
-        for (&synapse_id, updated) in accepted_ids.iter().zip(&incoming) {
+        // The rule only receives staged synapse copies. Validate the complete
+        // result against the captured identities before publishing any copy.
+        for (&(synapse_id, pre, _), updated) in originals.iter().zip(&incoming) {
             if updated.id() != synapse_id
                 || updated.post() != spike.neuron_id
-                || self.network.synapse(synapse_id).map(Synapse::pre) != Some(updated.pre())
+                || updated.pre() != pre
             {
                 return Err(SimulationError::InvalidLearningMutation { synapse_id });
             }
@@ -1410,9 +1707,7 @@ impl<R: PlasticityRule> Simulation<R> {
             })?;
         }
 
-        for ((synapse_id, old_weight), updated) in
-            accepted_ids.into_iter().zip(old_weights).zip(incoming)
-        {
+        for ((synapse_id, _, old_weight), updated) in originals.into_iter().zip(incoming) {
             let new_weight = updated.weight();
             *self
                 .network
@@ -1444,14 +1739,13 @@ impl<R: PlasticityRule> Simulation<R> {
         let utility_tau = self.utility_dynamics.utility_tau_us;
 
         for synapse_id in incoming_ids {
+            let synapse = self
+                .network
+                .synapse(synapse_id)
+                .ok_or(SimulationError::UnknownSynapse(synapse_id))?;
             let polarity = self
                 .network
-                .neuron(
-                    self.network
-                        .synapse(synapse_id)
-                        .ok_or(SimulationError::UnknownSynapse(synapse_id))?
-                        .pre(),
-                )
+                .neuron(synapse.pre())
                 .ok_or(SimulationError::UnknownNeuron(spike.neuron_id))?
                 .polarity();
 
@@ -1463,10 +1757,6 @@ impl<R: PlasticityRule> Simulation<R> {
             }
 
             let sample = {
-                let synapse = self
-                    .network
-                    .synapse(synapse_id)
-                    .ok_or(SimulationError::UnknownSynapse(synapse_id))?;
                 // Compute the decayed eligibility with the canonical τ_e so
                 // the rule does not need its own copy.
                 let eligibility = synapse
@@ -1536,53 +1826,6 @@ fn validate_input(target: NeuronId, amplitude: f32) -> Result<(), SimulationErro
 
 fn collect_input(inputs: &mut BTreeMap<NeuronId, Vec<f32>>, target: NeuronId, amplitude: f32) {
     inputs.entry(target).or_default().push(amplitude);
-}
-
-#[derive(Clone, Copy, Debug)]
-struct InputSummary {
-    summed_input: f32,
-    input_magnitude: f32,
-    inhibitory_input_magnitude: f32,
-}
-
-fn canonical_input_summary(
-    target: NeuronId,
-    mut amplitudes: Vec<f32>,
-) -> Result<InputSummary, SimulationError> {
-    amplitudes.sort_by(|left, right| {
-        right
-            .abs()
-            .total_cmp(&left.abs())
-            .then_with(|| left.total_cmp(right))
-    });
-    let input_magnitude = amplitudes
-        .iter()
-        .fold(0.0_f64, |sum, amplitude| sum + f64::from(amplitude.abs()));
-    if !input_magnitude.is_finite() {
-        return Err(SimulationError::NonFiniteInputMagnitude { target });
-    }
-    let input_magnitude = input_magnitude.min(f64::from(f32::MAX)) as f32;
-    let inhibitory_input_magnitude = amplitudes
-        .iter()
-        .filter(|amplitude| **amplitude < 0.0)
-        .fold(0.0_f64, |sum, amplitude| sum + f64::from(-*amplitude));
-    if !inhibitory_input_magnitude.is_finite() {
-        return Err(SimulationError::NonFiniteInputMagnitude { target });
-    }
-    let inhibitory_input_magnitude = inhibitory_input_magnitude.min(f64::from(f32::MAX)) as f32;
-    let sum = amplitudes
-        .into_iter()
-        .fold(0.0_f64, |sum, amplitude| sum + f64::from(amplitude));
-    let sum = sum as f32;
-    if sum.is_finite() {
-        Ok(InputSummary {
-            summed_input: sum,
-            input_magnitude,
-            inhibitory_input_magnitude,
-        })
-    } else {
-        Err(SimulationError::NonFiniteSummedInput { target })
-    }
 }
 
 #[cfg(test)]
@@ -1690,6 +1933,130 @@ mod tests {
                     .set_weight(Weight::new(synapse.weight().get() + 0.2).unwrap())
                     .unwrap();
             }
+        }
+    }
+
+    #[test]
+    fn buffered_propagation_matches_public_plans_and_validated_scheduling() {
+        let mut network = connected_network(Polarity::Inhibitory);
+        network
+            .add_neuron(neuron(91, Polarity::Excitatory))
+            .unwrap();
+        // Insert out of ID order, include a disabled edge and an empty source.
+        for (id, pre, post, delay, enabled) in [
+            (90, 2, 91, 9, true),
+            (8, 1, 91, 5, false),
+            (5, 1, 2, 5, true),
+        ] {
+            let mut synapse = Synapse::new(
+                SynapseId(id),
+                NeuronId(pre),
+                NeuronId(post),
+                Weight::new(0.1).unwrap(),
+                delay,
+                false,
+            )
+            .unwrap();
+            synapse.set_enabled(enabled);
+            network.add_synapse(synapse).unwrap();
+        }
+        let mut reference = simulation(network.clone(), NoPlasticity);
+        let mut buffered = simulation(network, NoPlasticity);
+        // Exercise buffer clearing for different degrees and repeated spikes.
+        let spikes: Vec<_> = [(1, 0), (91, 0), (2, 0), (1, 20), (2, 20)]
+            .into_iter()
+            .map(|(id, time)| Spike::new(NeuronId(id), SimTime(time)))
+            .collect();
+        for &spike in &spikes {
+            for transmission in
+                super::super::propagation::plan_spike_propagation(reference.network(), spike, 1.0)
+                    .unwrap()
+            {
+                reference.schedule_event(transmission.event).unwrap();
+            }
+        }
+        buffered.propagate_batch_spikes(&spikes).unwrap();
+        assert_eq!(buffered.run().unwrap(), reference.run().unwrap());
+        assert_eq!(buffered.network(), reference.network());
+        assert_eq!(buffered.event_log(), reference.event_log());
+    }
+
+    #[test]
+    fn a_failed_plan_never_enqueues_its_successful_prefix() {
+        let mut network = connected_network(Polarity::Excitatory);
+        network
+            .add_synapse(
+                Synapse::new(
+                    SynapseId(2),
+                    NeuronId(1),
+                    NeuronId(2),
+                    Weight::new(0.1).unwrap(),
+                    10,
+                    false,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut simulation = simulation(network, NoPlasticity).with_profiling();
+        simulation
+            .schedule_external_input(SimTime(u64::MAX - 6), NeuronId(1), 1.1)
+            .unwrap();
+        assert!(simulation.step().is_err());
+        assert!(simulation.is_poisoned());
+        assert!(matches!(
+            simulation.poison_reason(),
+            Some(SimulationError::Propagation(
+                PropagationError::ArrivalTimeOverflow { .. }
+            ))
+        ));
+        assert_eq!(simulation.pending_event_count(), 0);
+        let profile = simulation.profile().unwrap();
+        assert_eq!(profile.phase(ProfilePhase::PropagationPlan).failures, 1);
+        assert_eq!(profile.phase(ProfilePhase::PropagationEnqueue).calls, 0);
+    }
+
+    #[test]
+    fn post_learning_validates_all_staged_synapses_before_publishing_any() {
+        struct CorruptPost(u8);
+        impl PlasticityRule for CorruptPost {
+            fn accepts(&self, _: &Synapse, _: Polarity) -> bool {
+                true
+            }
+            fn on_pre_arrival(&mut self, _: &mut Synapse, _: &Neuron, _: SimTime) {}
+            fn on_post_spike(&mut self, _: &Neuron, incoming: &mut [Synapse], _: SimTime) {
+                incoming[0].set_weight(Weight::new(0.9).unwrap()).unwrap();
+                match self.0 {
+                    0 => incoming[1].id = SynapseId(999),
+                    1 => incoming[1].pre = NeuronId(2),
+                    2 => incoming[1].post = NeuronId(1),
+                    _ => incoming[1].delay_us = 0,
+                }
+            }
+        }
+        for corruption in 0..4 {
+            let mut network = connected_network(Polarity::Excitatory);
+            network
+                .add_synapse(
+                    Synapse::new(
+                        SynapseId(2),
+                        NeuronId(1),
+                        NeuronId(2),
+                        Weight::new(0.2).unwrap(),
+                        5,
+                        true,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let original = network.clone();
+            let mut simulation = simulation(network, CorruptPost(corruption));
+            assert!(
+                simulation
+                    .apply_post_spike_learning(Spike::new(NeuronId(2), SimTime::ZERO))
+                    .is_err()
+            );
+            assert_eq!(simulation.network(), &original);
+            assert!(simulation.event_log().is_empty());
         }
     }
 
@@ -2700,6 +3067,88 @@ mod tests {
         assert_eq!(report.spikes_emitted, 0);
         assert_eq!(neuron.intrinsic_current(), 0.0);
         assert!(neuron.structural_drive() > 0.09);
+    }
+
+    #[test]
+    fn homeostasis_population_excludes_clocks_and_one_shot_maintenance() {
+        let mut network = one_neuron_network();
+        network.add_neuron(neuron(2, Polarity::Excitatory)).unwrap();
+        let mut runtime = simulation(network, NoPlasticity)
+            .with_homeostasis(LocalHomeostasis::new(&HomeostasisConfig {
+                enabled: true,
+                update_interval_us: 10_000,
+                target_input_rate: 50.0,
+                structural_adjustment_rate: 1.0,
+                max_structural_drive: 100.0,
+                ..HomeostasisConfig::default()
+            }))
+            .unwrap();
+        runtime
+            .set_homeostasis_population(Some(BTreeSet::from([NeuronId(1)])))
+            .unwrap();
+        assert!(runtime.next_homeostasis_update(NeuronId(1)).is_some());
+        assert!(runtime.next_homeostasis_update(NeuronId(2)).is_none());
+        runtime
+            .schedule_homeostasis(SimTime(50_000), NeuronId(2))
+            .unwrap();
+        runtime
+            .schedule_external_input(SimTime(100_000), NeuronId(2), 0.0)
+            .unwrap();
+        runtime.run_until(SimTime(100_000)).unwrap();
+        assert_eq!(
+            runtime
+                .network()
+                .neuron(NeuronId(2))
+                .unwrap()
+                .structural_drive(),
+            0.0
+        );
+        assert!(
+            runtime
+                .network()
+                .neuron(NeuronId(1))
+                .unwrap()
+                .structural_drive()
+                > 0.0
+        );
+        assert!(runtime.event_log().iter().all(|event| !matches!(
+            event,
+            ObservationEvent::HomeostasisChanged {
+                neuron_id: NeuronId(2),
+                ..
+            }
+        )));
+        runtime
+            .set_homeostasis_population(Some(BTreeSet::from([NeuronId(2)])))
+            .unwrap();
+        let first = runtime.next_homeostasis_update(NeuronId(2)).unwrap();
+        runtime.run_until(first).unwrap();
+        assert!(
+            runtime
+                .network()
+                .neuron(NeuronId(2))
+                .unwrap()
+                .structural_drive()
+                <= 0.5001
+        );
+        assert!(runtime.next_homeostasis_update(NeuronId(1)).is_none());
+        let before = runtime.network().clone();
+        let booking = runtime.next_homeostasis_update(NeuronId(2));
+        assert!(
+            runtime
+                .set_homeostasis_population(Some(BTreeSet::from([NeuronId(999)])))
+                .is_err()
+        );
+        assert_eq!(runtime.network(), &before);
+        assert_eq!(runtime.next_homeostasis_update(NeuronId(2)), booking);
+        runtime.add_neuron(neuron(3, Polarity::Excitatory)).unwrap();
+        assert!(runtime.next_homeostasis_update(NeuronId(3)).is_none());
+        runtime.set_homeostasis_population(None).unwrap();
+        assert!(runtime.next_homeostasis_update(NeuronId(3)).is_some());
+        runtime
+            .set_homeostasis_population(Some(BTreeSet::new()))
+            .unwrap();
+        assert!((1..=3).all(|id| runtime.next_homeostasis_update(NeuronId(id)).is_none()));
     }
 
     #[test]

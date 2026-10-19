@@ -146,10 +146,25 @@ fn validate_amplitude(fiber: FiberId, amplitude: f32) -> Result<(), RoutingError
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::NeuronId, io::ChannelId, roots::RootId, transduction::ChannelSpike};
+    use crate::{
+        core::NeuronId,
+        io::ChannelId,
+        roots::{Root, RootChannel, RootDirection, RootId},
+        transduction::ChannelSpike,
+    };
 
     use super::*;
     use crate::nerves::{Fiber, FiberDirection};
+
+    fn declared_root(direction: RootDirection, channel: ChannelId) -> Root {
+        Root::new(
+            RootId(3),
+            "routing test",
+            direction,
+            vec![RootChannel { channel }],
+        )
+        .unwrap()
+    }
 
     #[test]
     fn sensory_routing_applies_only_fixed_delay_and_gain() {
@@ -160,7 +175,11 @@ mod tests {
             )
             .unwrap();
         mapping
-            .map_sensory(RootId(3), ChannelId(4), FiberId(1))
+            .map_sensory(
+                &declared_root(RootDirection::Sensory, ChannelId(4)),
+                ChannelId(4),
+                FiberId(1),
+            )
             .unwrap();
 
         let impulse = Routing::sensory(
@@ -189,7 +208,11 @@ mod tests {
             )
             .unwrap();
         mapping
-            .map_sensory(RootId(3), ChannelId(4), FiberId(1))
+            .map_sensory(
+                &declared_root(RootDirection::Sensory, ChannelId(4)),
+                ChannelId(4),
+                FiberId(1),
+            )
             .unwrap();
 
         assert_eq!(
@@ -217,7 +240,11 @@ mod tests {
             .add_fiber(Fiber::new(FiberId(1), FiberDirection::Motor, NeuronId(7), 2, 1.0).unwrap())
             .unwrap();
         mapping
-            .map_motor(RootId(3), ChannelId(1), FiberId(1))
+            .map_motor(
+                &declared_root(RootDirection::Motor, ChannelId(1)),
+                ChannelId(1),
+                FiberId(1),
+            )
             .unwrap();
 
         assert_eq!(
@@ -246,7 +273,11 @@ mod tests {
             )
             .unwrap();
         mapping
-            .map_sensory(RootId(3), ChannelId(4), FiberId(1))
+            .map_sensory(
+                &declared_root(RootDirection::Sensory, ChannelId(4)),
+                ChannelId(4),
+                FiberId(1),
+            )
             .unwrap();
 
         assert!(matches!(

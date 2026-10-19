@@ -9,3 +9,11 @@ default = []
 development = []
 diagnostics = []
 visualization = []
+cuda = ["dep:cudarc"]
+
+[dependencies]
+cudarc = { version = "=0.19.9", optional = true, default-features = false, features = ["std", "driver", "nvrtc", "dynamic-loading", "cuda-12080"] }
+
+[[example]]
+name = "self_organisation_profile"
+required-features = ["development"]

@@ -1,0 +1,2867 @@
+frozen=false intrinsic=false
+reports=RunReport { batches_processed: 13, events_processed: 19, spikes_emitted: 7, last_time: Some(SimTime(75)) } RunReport { batches_processed: 13, events_processed: 13, spikes_emitted: 0, last_time: Some(SimTime(1999)) }
+time=SimTime(1999) pending=3
+clocks=[(NeuronId(2), Some(SimTime(2111)), None), (NeuronId(17), Some(SimTime(2380)), None), (NeuronId(91), Some(SimTime(2499)), None)]
+network=Network {
+    neurons: {
+        NeuronId(
+            2,
+        ): Neuron {
+            id: NeuronId(
+                2,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Excitatory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 0.0,
+                    burst_gain: 0.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 0.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.0,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 0.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: 0.1713333,
+            last_update: SimTime(
+                1611,
+            ),
+            refractory_until: SimTime(
+                60,
+            ),
+            activity_trace: 1.4584289,
+            input_trace: 2.8345418,
+            last_spike: Some(
+                SimTime(
+                    57,
+                ),
+            ),
+            spike_count: 2,
+            threshold: 1.0,
+            burst_drive: 0.0,
+            adaptation_drive: 0.0,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.0,
+            intrinsic_current: -0.0005208067,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1611,
+            ),
+        },
+        NeuronId(
+            17,
+        ): Neuron {
+            id: NeuronId(
+                17,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Excitatory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 0.0,
+                    burst_gain: 0.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 0.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.0,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 0.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: -0.21143167,
+            last_update: SimTime(
+                1880,
+            ),
+            refractory_until: SimTime(
+                53,
+            ),
+            activity_trace: 1.3801051,
+            input_trace: 4.351145,
+            last_spike: Some(
+                SimTime(
+                    50,
+                ),
+            ),
+            spike_count: 2,
+            threshold: 1.0,
+            burst_drive: 0.0,
+            adaptation_drive: 0.0,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.0,
+            intrinsic_current: -0.00059128617,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1880,
+            ),
+        },
+        NeuronId(
+            91,
+        ): Neuron {
+            id: NeuronId(
+                91,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Inhibitory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 0.0,
+                    burst_gain: 0.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 0.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.0,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 0.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: -4.519766e-7,
+            last_update: SimTime(
+                1999,
+            ),
+            refractory_until: SimTime(
+                73,
+            ),
+            activity_trace: 2.025651,
+            input_trace: 2.2282162,
+            last_spike: Some(
+                SimTime(
+                    70,
+                ),
+            ),
+            spike_count: 3,
+            threshold: 1.0,
+            burst_drive: 0.0,
+            adaptation_drive: 0.0,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.0,
+            intrinsic_current: -0.0009367402,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1999,
+            ),
+        },
+    },
+    synapses: {
+        SynapseId(
+            8,
+        ): Synapse {
+            id: SynapseId(
+                8,
+            ),
+            pre: NeuronId(
+                91,
+            ),
+            post: NeuronId(
+                17,
+            ),
+            weight: Weight(
+                0.2,
+            ),
+            delay_us: 5,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 3,
+            utility_eligibility: 2.9948068,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    75,
+                ),
+            ),
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+        SynapseId(
+            53,
+        ): Synapse {
+            id: SynapseId(
+                53,
+            ),
+            pre: NeuronId(
+                17,
+            ),
+            post: NeuronId(
+                2,
+            ),
+            weight: Weight(
+                0.7506683,
+            ),
+            delay_us: 7,
+            plastic: true,
+            enabled: true,
+            pre_trace: 1.6065307,
+            pre_trace_updated_at: Some(
+                SimTime(
+                    57,
+                ),
+            ),
+            transmission_count: 2,
+            utility_eligibility: 1.997503,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    57,
+                ),
+            ),
+            utility: 0.65531266,
+            utility_updated_at: Some(
+                SimTime(
+                    57,
+                ),
+            ),
+        },
+        SynapseId(
+            99,
+        ): Synapse {
+            id: SynapseId(
+                99,
+            ),
+            pre: NeuronId(
+                2,
+            ),
+            post: NeuronId(
+                91,
+            ),
+            weight: Weight(
+                1.1,
+            ),
+            delay_us: 13,
+            plastic: false,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 2,
+            utility_eligibility: 1.997503,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    70,
+                ),
+            ),
+            utility: 0.65531266,
+            utility_updated_at: Some(
+                SimTime(
+                    70,
+                ),
+            ),
+        },
+        SynapseId(
+            105,
+        ): Synapse {
+            id: SynapseId(
+                105,
+            ),
+            pre: NeuronId(
+                2,
+            ),
+            post: NeuronId(
+                17,
+            ),
+            weight: Weight(
+                0.55,
+            ),
+            delay_us: 9,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 0,
+            utility_eligibility: 0.0,
+            utility_eligibility_updated_at: None,
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+    },
+    incoming: {
+        NeuronId(
+            2,
+        ): [
+            SynapseId(
+                53,
+            ),
+        ],
+        NeuronId(
+            17,
+        ): [
+            SynapseId(
+                8,
+            ),
+            SynapseId(
+                105,
+            ),
+        ],
+        NeuronId(
+            91,
+        ): [
+            SynapseId(
+                99,
+            ),
+        ],
+    },
+    outgoing: {
+        NeuronId(
+            2,
+        ): [
+            SynapseId(
+                99,
+            ),
+            SynapseId(
+                105,
+            ),
+        ],
+        NeuronId(
+            17,
+        ): [
+            SynapseId(
+                53,
+            ),
+        ],
+        NeuronId(
+            91,
+        ): [
+            SynapseId(
+                8,
+            ),
+        ],
+    },
+}
+traces=[(NeuronId(2), Some(DecayingTrace { value: 1.6592407, updated_at: SimTime(57) })), (NeuronId(17), Some(DecayingTrace { value: 1.4281218, updated_at: SimTime(68) })), (NeuronId(91), Some(DecayingTrace { value: 2.2968688, updated_at: SimTime(70) }))]
+homeostasis=LocalHomeostasis { enabled: true, update_interval_us: 500, target_rate_hz: 5.0, target_input_rate: 1.0, intrinsic_adjustment_rate: 0.001, structural_adjustment_rate: 0.01, min_intrinsic_current: -1000.0, max_intrinsic_current: 1000.0, min_structural_drive: 0.0, max_structural_drive: 1000.0 }
+log=EventLog {
+    events: [
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.1,
+        },
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.2,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    0,
+                ),
+            },
+        ),
+        ExternalInput {
+            time: SimTime(
+                1,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.5,
+        },
+        ExternalInput {
+            time: SimTime(
+                7,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.5,
+        },
+        SynapticArrival {
+            time: SimTime(
+                7,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.65,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    7,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                7,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.65,
+            ),
+            new_weight: Weight(
+                0.72999996,
+            ),
+        },
+        ExternalInput {
+            time: SimTime(
+                16,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    16,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                18,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.45,
+        },
+        WeightChanged {
+            time: SimTime(
+                18,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            old_weight: Weight(
+                0.45,
+            ),
+            new_weight: Weight(
+                0.37253627,
+            ),
+        },
+        ExternalInput {
+            time: SimTime(
+                20,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.6,
+        },
+        SynapticArrival {
+            time: SimTime(
+                20,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    20,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                21,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        SynapticArrival {
+            time: SimTime(
+                25,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        ExternalInput {
+            time: SimTime(
+                50,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    50,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                50,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            old_weight: Weight(
+                0.37253627,
+            ),
+            new_weight: Weight(
+                0.43062818,
+            ),
+        },
+        SynapticArrival {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.72999996,
+        },
+        WeightChanged {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.72999996,
+            ),
+            new_weight: Weight(
+                0.6706683,
+            ),
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    57,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.6706683,
+            ),
+            new_weight: Weight(
+                0.7506683,
+            ),
+        },
+        SynapticArrival {
+            time: SimTime(
+                68,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.43062818,
+        },
+        WeightChanged {
+            time: SimTime(
+                68,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            old_weight: Weight(
+                0.43062818,
+            ),
+            new_weight: Weight(
+                0.35316446,
+            ),
+        },
+        ExternalInput {
+            time: SimTime(
+                70,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 1.1,
+        },
+        ExternalInput {
+            time: SimTime(
+                70,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: -0.3,
+        },
+        SynapticArrival {
+            time: SimTime(
+                70,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    70,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                75,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                111,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 393.7346,
+            input_avg: 765.2463,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -4.3149543e-5,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                380,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 372.58942,
+            input_avg: 1038.8442,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -0.000139684,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                499,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 546.8686,
+            input_avg: 601.5554,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -0.00027039245,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                611,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 356.2658,
+            input_avg: 692.42346,
+            old_intrinsic_current: -4.3149543e-5,
+            new_intrinsic_current: -0.00021878246,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                880,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 337.13287,
+            input_avg: 939.98517,
+            old_intrinsic_current: -0.000139684,
+            new_intrinsic_current: -0.00030575044,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                999,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 494.82712,
+            input_avg: 544.3099,
+            old_intrinsic_current: -0.00027039245,
+            new_intrinsic_current: -0.000515306,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        ExternalInput {
+            time: SimTime(
+                1000,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.6,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1111,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 322.36264,
+            input_avg: 626.53064,
+            old_intrinsic_current: -0.00021878246,
+            new_intrinsic_current: -0.00037746382,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1380,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 305.0504,
+            input_avg: 961.7518,
+            old_intrinsic_current: -0.00030575044,
+            new_intrinsic_current: -0.00045577565,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1499,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 447.73813,
+            input_avg: 492.51193,
+            old_intrinsic_current: -0.000515306,
+            new_intrinsic_current: -0.0007366751,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1611,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 291.68576,
+            input_avg: 566.9084,
+            old_intrinsic_current: -0.00037746382,
+            new_intrinsic_current: -0.0005208067,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1880,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 276.02103,
+            input_avg: 870.22894,
+            old_intrinsic_current: -0.00045577565,
+            new_intrinsic_current: -0.00059128617,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1999,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 405.1302,
+            input_avg: 445.64325,
+            old_intrinsic_current: -0.0007366751,
+            new_intrinsic_current: -0.0009367402,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+    ],
+}
+
+frozen=true intrinsic=false
+reports=RunReport { batches_processed: 13, events_processed: 19, spikes_emitted: 7, last_time: Some(SimTime(75)) } RunReport { batches_processed: 13, events_processed: 13, spikes_emitted: 0, last_time: Some(SimTime(1999)) }
+time=SimTime(1999) pending=3
+clocks=[(NeuronId(2), Some(SimTime(2111)), None), (NeuronId(17), Some(SimTime(2380)), None), (NeuronId(91), Some(SimTime(2499)), None)]
+network=Network {
+    neurons: {
+        NeuronId(
+            2,
+        ): Neuron {
+            id: NeuronId(
+                2,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Excitatory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 0.0,
+                    burst_gain: 0.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 0.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.0,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 0.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: 0.1713333,
+            last_update: SimTime(
+                1611,
+            ),
+            refractory_until: SimTime(
+                60,
+            ),
+            activity_trace: 1.4584289,
+            input_trace: 2.775913,
+            last_spike: Some(
+                SimTime(
+                    57,
+                ),
+            ),
+            spike_count: 2,
+            threshold: 1.0,
+            burst_drive: 0.0,
+            adaptation_drive: 0.0,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.0,
+            intrinsic_current: -0.0005208067,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1611,
+            ),
+        },
+        NeuronId(
+            17,
+        ): Neuron {
+            id: NeuronId(
+                17,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Excitatory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 0.0,
+                    burst_gain: 0.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 0.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.0,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 0.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: -0.20826773,
+            last_update: SimTime(
+                1880,
+            ),
+            refractory_until: SimTime(
+                53,
+            ),
+            activity_trace: 1.3801051,
+            input_trace: 4.3646274,
+            last_spike: Some(
+                SimTime(
+                    50,
+                ),
+            ),
+            spike_count: 2,
+            threshold: 1.0,
+            burst_drive: 0.0,
+            adaptation_drive: 0.0,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.0,
+            intrinsic_current: -0.00059128617,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1880,
+            ),
+        },
+        NeuronId(
+            91,
+        ): Neuron {
+            id: NeuronId(
+                91,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Inhibitory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 0.0,
+                    burst_gain: 0.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 0.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.0,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 0.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: -4.519766e-7,
+            last_update: SimTime(
+                1999,
+            ),
+            refractory_until: SimTime(
+                73,
+            ),
+            activity_trace: 2.025651,
+            input_trace: 2.2282162,
+            last_spike: Some(
+                SimTime(
+                    70,
+                ),
+            ),
+            spike_count: 3,
+            threshold: 1.0,
+            burst_drive: 0.0,
+            adaptation_drive: 0.0,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.0,
+            intrinsic_current: -0.0009367402,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1999,
+            ),
+        },
+    },
+    synapses: {
+        SynapseId(
+            8,
+        ): Synapse {
+            id: SynapseId(
+                8,
+            ),
+            pre: NeuronId(
+                91,
+            ),
+            post: NeuronId(
+                17,
+            ),
+            weight: Weight(
+                0.2,
+            ),
+            delay_us: 5,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 3,
+            utility_eligibility: 0.0,
+            utility_eligibility_updated_at: None,
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+        SynapseId(
+            53,
+        ): Synapse {
+            id: SynapseId(
+                53,
+            ),
+            pre: NeuronId(
+                17,
+            ),
+            post: NeuronId(
+                2,
+            ),
+            weight: Weight(
+                0.65,
+            ),
+            delay_us: 7,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 2,
+            utility_eligibility: 0.0,
+            utility_eligibility_updated_at: None,
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+        SynapseId(
+            99,
+        ): Synapse {
+            id: SynapseId(
+                99,
+            ),
+            pre: NeuronId(
+                2,
+            ),
+            post: NeuronId(
+                91,
+            ),
+            weight: Weight(
+                1.1,
+            ),
+            delay_us: 13,
+            plastic: false,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 2,
+            utility_eligibility: 0.0,
+            utility_eligibility_updated_at: None,
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+        SynapseId(
+            105,
+        ): Synapse {
+            id: SynapseId(
+                105,
+            ),
+            pre: NeuronId(
+                2,
+            ),
+            post: NeuronId(
+                17,
+            ),
+            weight: Weight(
+                0.55,
+            ),
+            delay_us: 9,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 0,
+            utility_eligibility: 0.0,
+            utility_eligibility_updated_at: None,
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+    },
+    incoming: {
+        NeuronId(
+            2,
+        ): [
+            SynapseId(
+                53,
+            ),
+        ],
+        NeuronId(
+            17,
+        ): [
+            SynapseId(
+                8,
+            ),
+            SynapseId(
+                105,
+            ),
+        ],
+        NeuronId(
+            91,
+        ): [
+            SynapseId(
+                99,
+            ),
+        ],
+    },
+    outgoing: {
+        NeuronId(
+            2,
+        ): [
+            SynapseId(
+                99,
+            ),
+            SynapseId(
+                105,
+            ),
+        ],
+        NeuronId(
+            17,
+        ): [
+            SynapseId(
+                53,
+            ),
+        ],
+        NeuronId(
+            91,
+        ): [
+            SynapseId(
+                8,
+            ),
+        ],
+    },
+}
+traces=[(NeuronId(2), None), (NeuronId(17), None), (NeuronId(91), None)]
+homeostasis=LocalHomeostasis { enabled: true, update_interval_us: 500, target_rate_hz: 5.0, target_input_rate: 1.0, intrinsic_adjustment_rate: 0.001, structural_adjustment_rate: 0.01, min_intrinsic_current: -1000.0, max_intrinsic_current: 1000.0, min_structural_drive: 0.0, max_structural_drive: 1000.0 }
+log=EventLog {
+    events: [
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.1,
+        },
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.2,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    0,
+                ),
+            },
+        ),
+        ExternalInput {
+            time: SimTime(
+                1,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.5,
+        },
+        ExternalInput {
+            time: SimTime(
+                7,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.5,
+        },
+        SynapticArrival {
+            time: SimTime(
+                7,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.65,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    7,
+                ),
+            },
+        ),
+        ExternalInput {
+            time: SimTime(
+                16,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    16,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                18,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.45,
+        },
+        ExternalInput {
+            time: SimTime(
+                20,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.6,
+        },
+        SynapticArrival {
+            time: SimTime(
+                20,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    20,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                21,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        SynapticArrival {
+            time: SimTime(
+                25,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        ExternalInput {
+            time: SimTime(
+                50,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    50,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.65,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    57,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                68,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.45,
+        },
+        ExternalInput {
+            time: SimTime(
+                70,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 1.1,
+        },
+        ExternalInput {
+            time: SimTime(
+                70,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: -0.3,
+        },
+        SynapticArrival {
+            time: SimTime(
+                70,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    70,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                75,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                111,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 393.7346,
+            input_avg: 749.4181,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -4.3149543e-5,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                380,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 372.58942,
+            input_avg: 1042.4841,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -0.000139684,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                499,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 546.8686,
+            input_avg: 601.5554,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -0.00027039245,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                611,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 356.2658,
+            input_avg: 678.10156,
+            old_intrinsic_current: -4.3149543e-5,
+            new_intrinsic_current: -0.00021878246,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                880,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 337.13287,
+            input_avg: 943.2787,
+            old_intrinsic_current: -0.000139684,
+            new_intrinsic_current: -0.00030575044,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                999,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 494.82712,
+            input_avg: 544.3099,
+            old_intrinsic_current: -0.00027039245,
+            new_intrinsic_current: -0.000515306,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        ExternalInput {
+            time: SimTime(
+                1000,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.6,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1111,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 322.36264,
+            input_avg: 613.57166,
+            old_intrinsic_current: -0.00021878246,
+            new_intrinsic_current: -0.00037746382,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1380,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 305.0504,
+            input_avg: 964.7318,
+            old_intrinsic_current: -0.00030575044,
+            new_intrinsic_current: -0.00045577565,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1499,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 447.73813,
+            input_avg: 492.51193,
+            old_intrinsic_current: -0.000515306,
+            new_intrinsic_current: -0.0007366751,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1611,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 291.68576,
+            input_avg: 555.1826,
+            old_intrinsic_current: -0.00037746382,
+            new_intrinsic_current: -0.0005208067,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1880,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 276.02103,
+            input_avg: 872.9255,
+            old_intrinsic_current: -0.00045577565,
+            new_intrinsic_current: -0.00059128617,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1999,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 405.1302,
+            input_avg: 445.64325,
+            old_intrinsic_current: -0.0007366751,
+            new_intrinsic_current: -0.0009367402,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+    ],
+}
+
+frozen=false intrinsic=true
+reports=RunReport { batches_processed: 13, events_processed: 19, spikes_emitted: 7, last_time: Some(SimTime(75)) } RunReport { batches_processed: 22, events_processed: 22, spikes_emitted: 5, last_time: Some(SimTime(1999)) }
+time=SimTime(1999) pending=6
+clocks=[(NeuronId(2), Some(SimTime(2111)), Some(SimTime(2869))), (NeuronId(17), Some(SimTime(2380)), Some(SimTime(2002))), (NeuronId(91), Some(SimTime(2499)), Some(SimTime(2903)))]
+network=Network {
+    neurons: {
+        NeuronId(
+            2,
+        ): Neuron {
+            id: NeuronId(
+                2,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Excitatory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 1200.0,
+                    burst_gain: 200.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 100.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.05,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 100.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: 0.2665708,
+            last_update: SimTime(
+                1611,
+            ),
+            refractory_until: SimTime(
+                1431,
+            ),
+            activity_trace: 3.2552588,
+            input_trace: 3.4616785,
+            last_spike: Some(
+                SimTime(
+                    1428,
+                ),
+            ),
+            spike_count: 4,
+            threshold: 1.0,
+            burst_drive: 758.86926,
+            adaptation_drive: 395.77313,
+            rebound_drive: 27.775307,
+            threshold_adaptation: 0.19788657,
+            intrinsic_current: -0.0007925248,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1611,
+            ),
+        },
+        NeuronId(
+            17,
+        ): Neuron {
+            id: NeuronId(
+                17,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Excitatory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 1200.0,
+                    burst_gain: 200.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 100.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.05,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 100.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: 1.0858965,
+            last_update: SimTime(
+                1880,
+            ),
+            refractory_until: SimTime(
+                708,
+            ),
+            activity_trace: 2.170676,
+            input_trace: 5.7043133,
+            last_spike: Some(
+                SimTime(
+                    705,
+                ),
+            ),
+            spike_count: 3,
+            threshold: 1.0,
+            burst_drive: 553.1573,
+            adaptation_drive: 295.15607,
+            rebound_drive: 168.78818,
+            threshold_adaptation: 0.14757805,
+            intrinsic_current: -0.0008542754,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1880,
+            ),
+        },
+        NeuronId(
+            91,
+        ): Neuron {
+            id: NeuronId(
+                91,
+            ),
+            position: Position3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            polarity: Inhibitory,
+            role: None,
+            params: NeuronConfig {
+                resting_potential: 0.0,
+                reset_potential: 0.0,
+                threshold: 1.0,
+                membrane_tau_us: 1000.0,
+                refractory_period_us: 3,
+                activity_trace_tau_us: 5000.0,
+                intrinsic: IntrinsicDynamicsConfig {
+                    intrinsic_drive: 1200.0,
+                    burst_gain: 200.0,
+                    burst_tau_us: 20000.0,
+                    adaptation_gain: 100.0,
+                    adaptation_tau_us: 100000.0,
+                    threshold_adaptation_gain: 0.05,
+                    threshold_adaptation_tau_us: 100000.0,
+                    rebound_gain: 100.0,
+                    rebound_tau_us: 20000.0,
+                },
+            },
+            membrane_potential: 0.7031131,
+            last_update: SimTime(
+                1999,
+            ),
+            refractory_until: SimTime(
+                1444,
+            ),
+            activity_trace: 3.6926486,
+            input_trace: 4.061913,
+            last_spike: Some(
+                SimTime(
+                    1441,
+                ),
+            ),
+            spike_count: 5,
+            threshold: 1.0,
+            burst_drive: 925.8945,
+            adaptation_drive: 492.3283,
+            rebound_drive: 0.0,
+            threshold_adaptation: 0.24616416,
+            intrinsic_current: -0.0013820368,
+            structural_drive: 0.0,
+            last_homeostasis_update: SimTime(
+                1999,
+            ),
+        },
+    },
+    synapses: {
+        SynapseId(
+            8,
+        ): Synapse {
+            id: SynapseId(
+                8,
+            ),
+            pre: NeuronId(
+                91,
+            ),
+            post: NeuronId(
+                17,
+            ),
+            weight: Weight(
+                0.2,
+            ),
+            delay_us: 5,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 5,
+            utility_eligibility: 4.760453,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    1446,
+                ),
+            ),
+            utility: 0.0,
+            utility_updated_at: None,
+        },
+        SynapseId(
+            53,
+        ): Synapse {
+            id: SynapseId(
+                53,
+            ),
+            pre: NeuronId(
+                17,
+            ),
+            post: NeuronId(
+                2,
+            ),
+            weight: Weight(
+                0.67190266,
+            ),
+            delay_us: 7,
+            plastic: true,
+            enabled: true,
+            pre_trace: 0.00077884,
+            pre_trace_updated_at: Some(
+                SimTime(
+                    1428,
+                ),
+            ),
+            transmission_count: 3,
+            utility_eligibility: 2.9331446,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    712,
+                ),
+            ),
+            utility: 0.70111614,
+            utility_updated_at: Some(
+                SimTime(
+                    1428,
+                ),
+            ),
+        },
+        SynapseId(
+            99,
+        ): Synapse {
+            id: SynapseId(
+                99,
+            ),
+            pre: NeuronId(
+                2,
+            ),
+            post: NeuronId(
+                91,
+            ),
+            weight: Weight(
+                1.1,
+            ),
+            delay_us: 13,
+            plastic: false,
+            enabled: true,
+            pre_trace: 0.0,
+            pre_trace_updated_at: None,
+            transmission_count: 4,
+            utility_eligibility: 3.8292239,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    1441,
+                ),
+            ),
+            utility: 0.7130578,
+            utility_updated_at: Some(
+                SimTime(
+                    1441,
+                ),
+            ),
+        },
+        SynapseId(
+            105,
+        ): Synapse {
+            id: SynapseId(
+                105,
+            ),
+            pre: NeuronId(
+                2,
+            ),
+            post: NeuronId(
+                17,
+            ),
+            weight: Weight(
+                0.63,
+            ),
+            delay_us: 9,
+            plastic: true,
+            enabled: true,
+            pre_trace: 1.0006622,
+            pre_trace_updated_at: Some(
+                SimTime(
+                    1437,
+                ),
+            ),
+            transmission_count: 2,
+            utility_eligibility: 1.9640617,
+            utility_eligibility_updated_at: Some(
+                SimTime(
+                    1437,
+                ),
+            ),
+            utility: 0.63212055,
+            utility_updated_at: Some(
+                SimTime(
+                    705,
+                ),
+            ),
+        },
+    },
+    incoming: {
+        NeuronId(
+            2,
+        ): [
+            SynapseId(
+                53,
+            ),
+        ],
+        NeuronId(
+            17,
+        ): [
+            SynapseId(
+                8,
+            ),
+            SynapseId(
+                105,
+            ),
+        ],
+        NeuronId(
+            91,
+        ): [
+            SynapseId(
+                99,
+            ),
+        ],
+    },
+    outgoing: {
+        NeuronId(
+            2,
+        ): [
+            SynapseId(
+                99,
+            ),
+            SynapseId(
+                105,
+            ),
+        ],
+        NeuronId(
+            17,
+        ): [
+            SynapseId(
+                53,
+            ),
+        ],
+        NeuronId(
+            91,
+        ): [
+            SynapseId(
+                8,
+            ),
+        ],
+    },
+}
+traces=[(NeuronId(2), Some(DecayingTrace { value: 1.002261, updated_at: SimTime(1428) })), (NeuronId(17), Some(DecayingTrace { value: 0.0022587238, updated_at: SimTime(1437) })), (NeuronId(91), Some(DecayingTrace { value: 1.002268, updated_at: SimTime(1441) }))]
+homeostasis=LocalHomeostasis { enabled: true, update_interval_us: 500, target_rate_hz: 5.0, target_input_rate: 1.0, intrinsic_adjustment_rate: 0.001, structural_adjustment_rate: 0.01, min_intrinsic_current: -1000.0, max_intrinsic_current: 1000.0, min_structural_drive: 0.0, max_structural_drive: 1000.0 }
+log=EventLog {
+    events: [
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.1,
+        },
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        ExternalInput {
+            time: SimTime(
+                0,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.2,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    0,
+                ),
+            },
+        ),
+        ExternalInput {
+            time: SimTime(
+                1,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.5,
+        },
+        ExternalInput {
+            time: SimTime(
+                7,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.5,
+        },
+        SynapticArrival {
+            time: SimTime(
+                7,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.65,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    7,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                7,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.65,
+            ),
+            new_weight: Weight(
+                0.72999996,
+            ),
+        },
+        ExternalInput {
+            time: SimTime(
+                16,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    16,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                18,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.45,
+        },
+        WeightChanged {
+            time: SimTime(
+                18,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            old_weight: Weight(
+                0.45,
+            ),
+            new_weight: Weight(
+                0.37253627,
+            ),
+        },
+        ExternalInput {
+            time: SimTime(
+                20,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.6,
+        },
+        SynapticArrival {
+            time: SimTime(
+                20,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    20,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                21,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        SynapticArrival {
+            time: SimTime(
+                25,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        ExternalInput {
+            time: SimTime(
+                50,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    50,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                50,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            old_weight: Weight(
+                0.37253627,
+            ),
+            new_weight: Weight(
+                0.43062818,
+            ),
+        },
+        SynapticArrival {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.72999996,
+        },
+        WeightChanged {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.72999996,
+            ),
+            new_weight: Weight(
+                0.6706683,
+            ),
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    57,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                57,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.6706683,
+            ),
+            new_weight: Weight(
+                0.7506683,
+            ),
+        },
+        SynapticArrival {
+            time: SimTime(
+                68,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.43062818,
+        },
+        WeightChanged {
+            time: SimTime(
+                68,
+            ),
+            synapse_id: SynapseId(
+                5,
+            ),
+            old_weight: Weight(
+                0.43062818,
+            ),
+            new_weight: Weight(
+                0.35316446,
+            ),
+        },
+        ExternalInput {
+            time: SimTime(
+                70,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 1.1,
+        },
+        ExternalInput {
+            time: SimTime(
+                70,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: -0.3,
+        },
+        SynapticArrival {
+            time: SimTime(
+                70,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    70,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                75,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                111,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 393.7346,
+            input_avg: 765.2463,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -4.3149543e-5,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                380,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 372.58942,
+            input_avg: 1038.8442,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -0.000139684,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                499,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 546.8686,
+            input_avg: 601.5554,
+            old_intrinsic_current: 0.0,
+            new_intrinsic_current: -0.00027039245,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                611,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 356.2658,
+            input_avg: 692.42346,
+            old_intrinsic_current: -4.3149543e-5,
+            new_intrinsic_current: -0.00021878246,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    696,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                705,
+            ),
+            synapse_id: SynapseId(
+                105,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.55,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    17,
+                ),
+                time: SimTime(
+                    705,
+                ),
+            },
+        ),
+        WeightChanged {
+            time: SimTime(
+                705,
+            ),
+            synapse_id: SynapseId(
+                105,
+            ),
+            old_weight: Weight(
+                0.55,
+            ),
+            new_weight: Weight(
+                0.63,
+            ),
+        },
+        SynapticArrival {
+            time: SimTime(
+                709,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    709,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                712,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            source: NeuronId(
+                17,
+            ),
+            target: NeuronId(
+                2,
+            ),
+            amplitude: 0.7506683,
+        },
+        WeightChanged {
+            time: SimTime(
+                712,
+            ),
+            synapse_id: SynapseId(
+                53,
+            ),
+            old_weight: Weight(
+                0.7506683,
+            ),
+            new_weight: Weight(
+                0.67190266,
+            ),
+        },
+        SynapticArrival {
+            time: SimTime(
+                714,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                880,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 530.2539,
+            input_avg: 1084.8956,
+            old_intrinsic_current: -0.000139684,
+            new_intrinsic_current: -0.00040231098,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                999,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 683.5571,
+            input_avg: 751.91284,
+            old_intrinsic_current: -0.00027039245,
+            new_intrinsic_current: -0.00060967106,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        ExternalInput {
+            time: SimTime(
+                1000,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.6,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1111,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 506.43286,
+            input_avg: 765.14923,
+            old_intrinsic_current: -0.00021878246,
+            new_intrinsic_current: -0.00046949892,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1380,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 479.79355,
+            input_avg: 1092.8721,
+            old_intrinsic_current: -0.00040231098,
+            new_intrinsic_current: -0.0006397078,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    2,
+                ),
+                time: SimTime(
+                    1428,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                1437,
+            ),
+            synapse_id: SynapseId(
+                105,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: 0.63,
+        },
+        SynapticArrival {
+            time: SimTime(
+                1441,
+            ),
+            synapse_id: SynapseId(
+                99,
+            ),
+            source: NeuronId(
+                2,
+            ),
+            target: NeuronId(
+                91,
+            ),
+            amplitude: 1.1,
+        },
+        SpikeEmitted(
+            Spike {
+                neuron_id: NeuronId(
+                    91,
+                ),
+                time: SimTime(
+                    1441,
+                ),
+            },
+        ),
+        SynapticArrival {
+            time: SimTime(
+                1446,
+            ),
+            synapse_id: SynapseId(
+                8,
+            ),
+            source: NeuronId(
+                91,
+            ),
+            target: NeuronId(
+                17,
+            ),
+            amplitude: -0.2,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1499,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 816.2016,
+            input_avg: 897.8216,
+            old_intrinsic_current: -0.00060967106,
+            new_intrinsic_current: -0.0010152719,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1611,
+            ),
+            neuron_id: NeuronId(
+                2,
+            ),
+            firing_avg: 651.05176,
+            input_avg: 692.3357,
+            old_intrinsic_current: -0.00046949892,
+            new_intrinsic_current: -0.0007925248,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1880,
+            ),
+            neuron_id: NeuronId(
+                17,
+            ),
+            firing_avg: 434.1352,
+            input_avg: 1140.8627,
+            old_intrinsic_current: -0.0006397078,
+            new_intrinsic_current: -0.0008542754,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+        HomeostasisChanged {
+            time: SimTime(
+                1999,
+            ),
+            neuron_id: NeuronId(
+                91,
+            ),
+            firing_avg: 738.5297,
+            input_avg: 812.3826,
+            old_intrinsic_current: -0.0010152719,
+            new_intrinsic_current: -0.0013820368,
+            old_structural_drive: 0.0,
+            new_structural_drive: 0.0,
+        },
+    ],
+}

@@ -73,14 +73,10 @@ fn build_network() -> Network {
 
     // Pre-existing A → X and C → X connections (will be pruned).
     network
-        .add_synapse(
-            Synapse::new(A_TO_X, A, X, Weight::new(0.5).unwrap(), 1, true).unwrap(),
-        )
+        .add_synapse(Synapse::new(A_TO_X, A, X, Weight::new(0.5).unwrap(), 1, true).unwrap())
         .unwrap();
     network
-        .add_synapse(
-            Synapse::new(C_TO_X, C, X, Weight::new(0.5).unwrap(), 1, true).unwrap(),
-        )
+        .add_synapse(Synapse::new(C_TO_X, C, X, Weight::new(0.5).unwrap(), 1, true).unwrap())
         .unwrap();
     network
 }
@@ -265,10 +261,12 @@ fn m1_self_organisation_forms_useful_prunes_useless() {
     // Phase 6: Commit the pruning plan. A → X and C → X are removed.
     let mut prune_plan = DevelopmentPlan::default();
     for candidate in &candidates {
-        prune_plan.prunings.push(nerva::development::PlannedPruning {
-            synapse_id: candidate.synapse_id,
-            target: candidate.target,
-        });
+        prune_plan
+            .prunings
+            .push(nerva::development::PlannedPruning {
+                synapse_id: candidate.synapse_id,
+                target: candidate.target,
+            });
     }
     prune_plan.validate(&simulation).unwrap();
     prune_plan

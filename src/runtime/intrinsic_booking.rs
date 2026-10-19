@@ -17,7 +17,7 @@ pub(crate) struct IntrinsicBooking {
 ///
 /// Scheduling belongs to the executor, not to a neuron. Keeping this map here
 /// prevents core cell state from depending on scheduler internals.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct IntrinsicBookings(BTreeMap<NeuronId, IntrinsicBooking>);
 
 impl IntrinsicBookings {

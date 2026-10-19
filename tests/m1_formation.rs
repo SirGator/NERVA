@@ -113,11 +113,19 @@ fn m1_formation_creates_correlated_a_to_b_only() {
 
     assert_eq!(plan.formations.len(), 1, "exactly one formation expected");
     let formation = &plan.formations[0];
-    assert_eq!(formation.target, B, "target must be the undersupplied neuron B");
-    assert_eq!(formation.source, A, "source must be the correlated neuron A");
+    assert_eq!(
+        formation.target, B,
+        "target must be the undersupplied neuron B"
+    );
+    assert_eq!(
+        formation.source, A,
+        "source must be the correlated neuron A"
+    );
     assert_ne!(formation.source, formation.target, "no self-loop");
 
-    let created = plan.commit(&mut simulation, &config, FIRST_SYNAPSE).unwrap();
+    let created = plan
+        .commit(&mut simulation, &config, FIRST_SYNAPSE)
+        .unwrap();
     assert_eq!(created.len(), 1);
     assert_eq!(simulation.network().synapse_count(), 1);
 
@@ -140,11 +148,7 @@ fn m1_formation_creates_correlated_a_to_b_only() {
         "uncorrelated C must not connect to B"
     );
 
-    let drive_after = simulation
-        .network()
-        .neuron(B)
-        .unwrap()
-        .structural_drive();
+    let drive_after = simulation.network().neuron(B).unwrap().structural_drive();
     assert!(
         (drive_after - 1.0).abs() < 1e-5,
         "drive should be 2.0 - 1.0 = 1.0 after consumption, got {drive_after}"
@@ -157,22 +161,14 @@ fn m1_formation_plan_does_not_mutate_network() {
     let config = formation_config(0.0, 1_000_000.0);
 
     let synapse_count_before = simulation.network().synapse_count();
-    let drive_before = simulation
-        .network()
-        .neuron(B)
-        .unwrap()
-        .structural_drive();
+    let drive_before = simulation.network().neuron(B).unwrap().structural_drive();
 
     let plan = DevelopmentPlan::build(&simulation, &config).unwrap();
     assert!(!plan.is_empty());
 
     assert_eq!(simulation.network().synapse_count(), synapse_count_before);
     assert_eq!(
-        simulation
-            .network()
-            .neuron(B)
-            .unwrap()
-            .structural_drive(),
+        simulation.network().neuron(B).unwrap().structural_drive(),
         drive_before,
         "build must not alter structural drive"
     );
@@ -191,10 +187,7 @@ fn m1_formation_rejects_duplicate_plan() {
     });
 
     let result = plan.validate(&simulation);
-    assert!(
-        result.is_err(),
-        "duplicate formation must fail validation"
-    );
+    assert!(result.is_err(), "duplicate formation must fail validation");
 }
 
 #[test]
@@ -220,7 +213,9 @@ fn m1_formation_min_score_blocks_all_candidates() {
         "no candidate should reach the minimum score"
     );
 
-    let created = plan.commit(&mut simulation, &config, FIRST_SYNAPSE).unwrap();
+    let created = plan
+        .commit(&mut simulation, &config, FIRST_SYNAPSE)
+        .unwrap();
     assert!(created.is_empty());
     assert_eq!(simulation.network().synapse_count(), 0);
 }
@@ -257,9 +252,15 @@ fn m1_formation_atomicity_on_error_after_successful_mutation() {
     network.add_neuron(make_neuron(A, 0.0, 2.0)).unwrap();
     network.add_neuron(make_neuron(B, 1.0, 2.0)).unwrap();
     network.add_neuron(make_neuron(C, 2.0, 2.0)).unwrap();
-    network.add_neuron(make_neuron(NeuronId(4), 3.0, 0.0)).unwrap();
-    network.add_neuron(make_neuron(NeuronId(5), 4.0, 0.0)).unwrap();
-    network.add_neuron(make_neuron(NeuronId(6), 5.0, 0.0)).unwrap();
+    network
+        .add_neuron(make_neuron(NeuronId(4), 3.0, 0.0))
+        .unwrap();
+    network
+        .add_neuron(make_neuron(NeuronId(5), 4.0, 0.0))
+        .unwrap();
+    network
+        .add_neuron(make_neuron(NeuronId(6), 5.0, 0.0))
+        .unwrap();
 
     let mut simulation =
         Simulation::new(network, NoPlasticity, RuntimeConfig::default(), 1.0).unwrap();
@@ -320,11 +321,7 @@ fn m1_formation_atomicity_on_error_after_successful_mutation() {
     );
 
     for (id, drive_before) in drives_before {
-        let drive_after = simulation
-            .network()
-            .neuron(id)
-            .unwrap()
-            .structural_drive();
+        let drive_after = simulation.network().neuron(id).unwrap().structural_drive();
         assert!(
             (drive_after - drive_before).abs() < 1e-5,
             "failed commit must restore drive for neuron {id}: before={drive_before}, after={drive_after}"
@@ -338,7 +335,9 @@ fn m1_formation_no_duplicate_synapse_on_second_step() {
     let config = formation_config(0.0, 1_000_000.0);
 
     let plan1 = DevelopmentPlan::build(&simulation, &config).unwrap();
-    plan1.commit(&mut simulation, &config, FIRST_SYNAPSE).unwrap();
+    plan1
+        .commit(&mut simulation, &config, FIRST_SYNAPSE)
+        .unwrap();
     assert_eq!(simulation.network().synapse_count(), 1);
 
     let plan2 = DevelopmentPlan::build(&simulation, &config).unwrap();

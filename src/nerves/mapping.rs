@@ -2,7 +2,11 @@
 
 use std::collections::HashMap;
 
-use crate::{core::NeuronId, io::ChannelId, roots::RootId};
+use crate::{
+    core::NeuronId,
+    io::ChannelId,
+    roots::{Root, RootDirection, RootId},
+};
 
 use super::{Fiber, FiberDirection, FiberId};
 
@@ -22,10 +26,29 @@ pub enum MappingError {
     UnknownFiber(FiberId),
     /// The requested fiber has the wrong transport direction.
     DirectionMismatch(FiberId),
+    /// The requested channel is not declared by the supplied root.
+    UnknownChannel {
+        /// Root whose channel layout was checked.
+        root: RootId,
+        /// Undeclared channel identity.
+        channel: ChannelId,
+    },
+    /// The supplied root has the wrong direction for the requested association.
+    RootDirectionMismatch {
+        /// Root whose direction was checked.
+        root: RootId,
+        /// Required direction.
+        expected: RootDirection,
+        /// Supplied direction.
+        actual: RootDirection,
+    },
 }
 
-/// Fiber registry and fixed root-channel mapping.
-#[derive(Clone, Debug, Default)]
+/// Sole owner of physical root-channel associations and the fiber registry.
+///
+/// Each `(RootId, ChannelId)` identifies at most one fiber.
+/// Roots declare channel existence; fibers own endpoints, delays, and gains.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mapping {
     fibers: HashMap<FiberId, Fiber>,
     sensory_channels: HashMap<(RootId, ChannelId), FiberId>,
@@ -47,13 +70,17 @@ impl Mapping {
         Ok(())
     }
 
-    /// Connects one sensory root channel to a sensory fiber.
+    /// Connects one declared sensory root channel to a sensory fiber.
+    ///
+    /// Validates root direction and channel existence before changing the mapping.
+    /// Root identities and channel layouts must remain stable after binding.
     pub fn map_sensory(
         &mut self,
-        root: RootId,
+        root: &Root,
         channel: ChannelId,
         fiber: FiberId,
     ) -> Result<(), MappingError> {
+        Self::validate_root(root, channel, RootDirection::Sensory)?;
         let registered = self
             .fibers
             .get(&fiber)
@@ -61,20 +88,27 @@ impl Mapping {
         if registered.direction != FiberDirection::Sensory {
             return Err(MappingError::DirectionMismatch(fiber));
         }
-        if self.sensory_channels.contains_key(&(root, channel)) {
-            return Err(MappingError::DuplicateChannel { root, channel });
+        if self.has_channel(root.id, channel) {
+            return Err(MappingError::DuplicateChannel {
+                root: root.id,
+                channel,
+            });
         }
-        self.sensory_channels.insert((root, channel), fiber);
+        self.sensory_channels.insert((root.id, channel), fiber);
         Ok(())
     }
 
-    /// Connects a motor neuron and root channel to a motor fiber.
+    /// Connects a motor neuron and declared motor root channel to a motor fiber.
+    ///
+    /// Validates root direction and channel existence before changing the mapping.
+    /// Root identities and channel layouts must remain stable after binding.
     pub fn map_motor(
         &mut self,
-        root: RootId,
+        root: &Root,
         channel: ChannelId,
         fiber: FiberId,
     ) -> Result<(), MappingError> {
+        Self::validate_root(root, channel, RootDirection::Motor)?;
         let registered = self
             .fibers
             .get(&fiber)
@@ -82,13 +116,14 @@ impl Mapping {
         if registered.direction != FiberDirection::Motor {
             return Err(MappingError::DirectionMismatch(fiber));
         }
-        let mappings = self.motor_channels.entry(registered.neuron).or_default();
-        if mappings.iter().any(|(mapped_root, mapped_channel, _)| {
-            *mapped_root == root && *mapped_channel == channel
-        }) {
-            return Err(MappingError::DuplicateChannel { root, channel });
+        if self.has_channel(root.id, channel) {
+            return Err(MappingError::DuplicateChannel {
+                root: root.id,
+                channel,
+            });
         }
-        mappings.push((root, channel, fiber));
+        let mappings = self.motor_channels.entry(registered.neuron).or_default();
+        mappings.push((root.id, channel, fiber));
         mappings.sort_by_key(|(root, channel, fiber)| (*root, *channel, *fiber));
         Ok(())
     }
@@ -117,5 +152,41 @@ impl Mapping {
     /// Returns one registered fiber.
     pub fn fiber(&self, id: FiberId) -> Option<&Fiber> {
         self.fibers.get(&id)
+    }
+
+    fn validate_root(
+        root: &Root,
+        channel: ChannelId,
+        expected: RootDirection,
+    ) -> Result<(), MappingError> {
+        if root.direction != expected {
+            return Err(MappingError::RootDirectionMismatch {
+                root: root.id,
+                expected,
+                actual: root.direction,
+            });
+        }
+        if !root
+            .channels
+            .iter()
+            .any(|declared| declared.channel == channel)
+        {
+            return Err(MappingError::UnknownChannel {
+                root: root.id,
+                channel,
+            });
+        }
+        Ok(())
+    }
+
+    fn has_channel(&self, root: RootId, channel: ChannelId) -> bool {
+        self.sensory_channels.contains_key(&(root, channel))
+            || self
+                .motor_channels
+                .values()
+                .flatten()
+                .any(|(mapped_root, mapped_channel, _)| {
+                    *mapped_root == root && *mapped_channel == channel
+                })
     }
 }

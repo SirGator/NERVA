@@ -54,8 +54,12 @@ fn build_network() -> Network {
     // Target neuron with high structural drive → will request growth.
     network.add_neuron(make_neuron(TARGET, 0.0, 2.0)).unwrap();
     // Two excitatory sources nearby.
-    network.add_neuron(make_neuron(USEFUL_SOURCE, 0.5, 0.0)).unwrap();
-    network.add_neuron(make_neuron(SILENT_SOURCE, 1.0, 0.0)).unwrap();
+    network
+        .add_neuron(make_neuron(USEFUL_SOURCE, 0.5, 0.0))
+        .unwrap();
+    network
+        .add_neuron(make_neuron(SILENT_SOURCE, 1.0, 0.0))
+        .unwrap();
     network
 }
 
@@ -118,14 +122,28 @@ fn useful_synapse_accumulates_utility_and_is_retained() {
     // Manually add both synapses so we can track them by stable IDs.
     network
         .add_synapse(
-            Synapse::new(USEFUL_SYNAPSE, USEFUL_SOURCE, TARGET, Weight::new(0.5).unwrap(), 1, true)
-                .unwrap(),
+            Synapse::new(
+                USEFUL_SYNAPSE,
+                USEFUL_SOURCE,
+                TARGET,
+                Weight::new(0.5).unwrap(),
+                1,
+                true,
+            )
+            .unwrap(),
         )
         .unwrap();
     network
         .add_synapse(
-            Synapse::new(SILENT_SYNAPSE, SILENT_SOURCE, TARGET, Weight::new(0.5).unwrap(), 1, true)
-                .unwrap(),
+            Synapse::new(
+                SILENT_SYNAPSE,
+                SILENT_SOURCE,
+                TARGET,
+                Weight::new(0.5).unwrap(),
+                1,
+                true,
+            )
+            .unwrap(),
         )
         .unwrap();
 
@@ -180,14 +198,28 @@ fn silent_synapse_is_pruned_after_min_duration() {
     let mut network = build_network();
     network
         .add_synapse(
-            Synapse::new(USEFUL_SYNAPSE, USEFUL_SOURCE, TARGET, Weight::new(0.5).unwrap(), 1, true)
-                .unwrap(),
+            Synapse::new(
+                USEFUL_SYNAPSE,
+                USEFUL_SOURCE,
+                TARGET,
+                Weight::new(0.5).unwrap(),
+                1,
+                true,
+            )
+            .unwrap(),
         )
         .unwrap();
     network
         .add_synapse(
-            Synapse::new(SILENT_SYNAPSE, SILENT_SOURCE, TARGET, Weight::new(0.5).unwrap(), 1, true)
-                .unwrap(),
+            Synapse::new(
+                SILENT_SYNAPSE,
+                SILENT_SOURCE,
+                TARGET,
+                Weight::new(0.5).unwrap(),
+                1,
+                true,
+            )
+            .unwrap(),
         )
         .unwrap();
 
@@ -229,7 +261,8 @@ fn silent_synapse_is_pruned_after_min_duration() {
         target: TARGET,
     });
     plan.validate(&simulation).unwrap();
-    plan.commit(&mut simulation, &formation_config(), SynapseId(200)).unwrap();
+    plan.commit(&mut simulation, &formation_config(), SynapseId(200))
+        .unwrap();
 
     assert!(
         simulation.network().synapse(SILENT_SYNAPSE).is_none(),
@@ -253,11 +286,13 @@ fn formation_then_activity_then_retention_full_cycle() {
         RuntimeConfig::default(),
         1.0,
     )
-    .and_then(|sim| sim.with_utility_dynamics(UtilityDynamicsConfig {
-        eligibility_tau_us: 20_000.0,
-        eta: 0.2,
-        utility_tau_us: 500_000.0,
-    }))
+    .and_then(|sim| {
+        sim.with_utility_dynamics(UtilityDynamicsConfig {
+            eligibility_tau_us: 20_000.0,
+            eta: 0.2,
+            utility_tau_us: 500_000.0,
+        })
+    })
     .unwrap();
 
     // Initial activity so the candidate search has spike correlation data.
@@ -278,7 +313,9 @@ fn formation_then_activity_then_retention_full_cycle() {
         !plan.formations.is_empty(),
         "development plan should form at least one synapse"
     );
-    let created = plan.commit(&mut simulation, &config, SynapseId(200)).unwrap();
+    let created = plan
+        .commit(&mut simulation, &config, SynapseId(200))
+        .unwrap();
     assert_eq!(created.len(), 1);
     let formed_id = created[0].synapse_id;
     assert_eq!(created[0].target, TARGET);
@@ -534,8 +571,8 @@ fn no_utility_rule_exempts_every_synapse_from_pruning() {
         )
         .unwrap();
 
-    let mut simulation = Simulation::new(network, NoPlasticity, RuntimeConfig::default(), 1.0)
-        .unwrap();
+    let mut simulation =
+        Simulation::new(network, NoPlasticity, RuntimeConfig::default(), 1.0).unwrap();
     simulation
         .schedule_external_input(SimTime(5_000_000), TARGET, 0.0)
         .unwrap();

@@ -67,7 +67,7 @@ impl fmt::Display for SchedulerError {
 impl Error for SchedulerError {}
 
 /// A deterministic priority queue ordered by `(timestamp, insertion_sequence)`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EventScheduler<E> {
     /// Events are keyed by their two deterministic ordering keys. A map, in
     /// contrast to a binary heap with tombstones, lets a superseded predicted

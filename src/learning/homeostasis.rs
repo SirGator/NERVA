@@ -44,7 +44,7 @@ pub struct HomeostaticChange {
 /// instead, allowing a later development slice to search locally for new
 /// incoming connections without mistaking missing connectivity for missing
 /// excitability.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LocalHomeostasis {
     enabled: bool,
     update_interval_us: u64,
