@@ -750,6 +750,36 @@ impl<R: PlasticityRule> Simulation<R> {
         })
     }
 
+    /// Atomically blocks transmission through the selected edges, including
+    /// already travelling arrivals. Identity, weights and neuron state remain
+    /// intact. Unlike a plain enabled-flag edit, no queued input can escape the
+    /// block. Returns the number of cancelled arrivals.
+    pub fn disable_synapses_and_cancel_arrivals(
+        &mut self,
+        ids: &[SynapseId],
+    ) -> Result<usize, SimulationError> {
+        self.ensure_not_poisoned()?;
+        self.transaction(|simulation| {
+            for &id in ids {
+                if simulation.network.synapse(id).is_none() {
+                    return Err(SimulationError::UnknownSynapse(id));
+                }
+            }
+            let selected: BTreeSet<_> = ids.iter().copied().collect();
+            for &id in &selected {
+                simulation
+                    .network
+                    .synapse_mut(id)
+                    .unwrap()
+                    .set_enabled(false);
+            }
+            Ok(simulation.scheduler.cancel_matching(|event| {
+                matches!(event, EventKind::SynapticArrival { synapse_id, .. }
+                    if selected.contains(synapse_id))
+            }))
+        })
+    }
+
     /// Whether a fatal error poisoned this simulation.
     pub fn is_poisoned(&self) -> bool {
         self.poisoned.is_some()
@@ -2394,6 +2424,62 @@ mod tests {
             before_clock
         );
         assert!(simulation.run_until(SimTime(5_000)).is_ok());
+    }
+
+    #[test]
+    fn transmission_block_cancels_travelling_inputs_and_preserves_other_inputs() {
+        let mut simulation = simulation(connected_network(Polarity::Excitatory), NoPlasticity);
+        simulation
+            .schedule_external_input(SimTime::ZERO, NeuronId(1), 1.0)
+            .unwrap();
+        simulation.run_until(SimTime::ZERO).unwrap();
+        assert_eq!(simulation.pending_event_count(), 1);
+        let before = simulation.network().clone();
+        let pending = simulation.pending_event_count();
+        assert!(
+            simulation
+                .disable_synapses_and_cancel_arrivals(&[SynapseId(1), SynapseId(999)])
+                .is_err()
+        );
+        assert_eq!(simulation.network(), &before);
+        assert_eq!(simulation.pending_event_count(), pending);
+        simulation
+            .schedule_external_input(SimTime(20), NeuronId(2), 1.0)
+            .unwrap();
+        assert_eq!(
+            simulation
+                .disable_synapses_and_cancel_arrivals(&[SynapseId(1)])
+                .unwrap(),
+            1
+        );
+        let mut expected = before;
+        expected
+            .synapse_mut(SynapseId(1))
+            .unwrap()
+            .set_enabled(false);
+        assert_eq!(simulation.network(), &expected);
+        simulation.run_until(SimTime(20)).unwrap();
+        assert_eq!(
+            simulation
+                .network()
+                .neuron(NeuronId(2))
+                .unwrap()
+                .spike_count(),
+            1
+        );
+        simulation
+            .schedule_external_input(SimTime(10000), NeuronId(1), 1.0)
+            .unwrap();
+        simulation.run_until(SimTime(10010)).unwrap();
+        assert_eq!(
+            simulation
+                .network()
+                .neuron(NeuronId(2))
+                .unwrap()
+                .spike_count(),
+            1
+        );
+        assert_eq!(simulation.pending_event_count(), 0);
     }
 
     #[test]
