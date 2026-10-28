@@ -319,23 +319,43 @@ impl M0Experiment {
 
     /// Runs training, freezes weights, presents A, and calculates measurements.
     pub fn run(&self) -> Result<M0GroupResult, ExperimentError> {
-        self.run_impl(false).map(|(result, _)| result)
+        self.run_impl(false, None, 0).map(|(result, _)| result)
     }
 
     /// Runs the same experiment with host diagnostics, including both frozen probes.
     /// Wall times are returned separately from the deterministic result record.
     pub fn run_profiled(&self) -> Result<(M0GroupResult, RuntimeProfile), ExperimentError> {
-        self.run_impl(true)
+        self.run_impl(true, None, 0)
             .map(|(result, profile)| (result, profile.expect("profiling enabled")))
+    }
+
+    /// Reference-assay controls for external research copies. The group still
+    /// determines input ordering, while the two existing mechanisms are explicit.
+    /// Extra delay precedes the frozen cue; no continuing learning or interference
+    /// is implied. The standard run/run_profiled group policies remain unchanged.
+    pub fn run_controlled(
+        &self,
+        stdp: bool,
+        homeostasis: bool,
+        frozen_probe_delay_us: u64,
+    ) -> Result<M0GroupResult, ExperimentError> {
+        self.run_impl(false, Some((stdp, homeostasis)), frozen_probe_delay_us)
+            .map(|(result, _)| result)
     }
 
     fn run_impl(
         &self,
         profiling: bool,
+        mechanisms: Option<(bool, bool)>,
+        frozen_probe_delay_us: u64,
     ) -> Result<(M0GroupResult, Option<RuntimeProfile>), ExperimentError> {
         let mut group_config = self.config.nerva.clone();
         group_config.learning.enabled = self.group != M0Group::OrderedFixed;
         group_config.learning.homeostasis.enabled = self.group == M0Group::OrderedHomeostasis;
+        if let Some((stdp, homeostasis)) = mechanisms {
+            group_config.learning.enabled = stdp;
+            group_config.learning.homeostasis.enabled = homeostasis;
+        }
 
         let (network, sensory_neurons, pattern_neurons) = build_network(&self.config)?;
         let initial_weights: Vec<_> = network.synapses().map(|synapse| synapse.weight()).collect();
@@ -397,6 +417,7 @@ impl M0Experiment {
             .collect();
         let probe_start =
             checked_advance(training_deadline, self.config.pause_us, "probe separation")?;
+        let probe_start = checked_advance(probe_start, frozen_probe_delay_us, "retention delay")?;
 
         let first_probe = run_frozen_probe(
             trained_network.clone(),
