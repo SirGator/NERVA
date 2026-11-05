@@ -7,7 +7,7 @@
 
 use std::{error::Error, fmt};
 
-use crate::core::{Network, NeuronId, SimTime};
+use crate::core::{Network, Neuron, NeuronId, SimTime};
 
 /// Weights for the deliberately small M1.2 local candidate score.
 ///
@@ -107,6 +107,40 @@ pub fn local_candidates(
     now: SimTime,
     config: &CandidateSearchConfig,
 ) -> Result<Vec<Candidate>, CandidateSearchError> {
+    rank_candidates(network, target_id, now, config, network.neurons())
+}
+
+/// Applies the same local rule to an externally indexed set of source IDs.
+/// The caller must include every geometrically eligible source for an exhaustive
+/// search. Duplicate IDs are ignored; tie-breaking remains independent of order.
+pub fn local_candidates_in(
+    network: &Network,
+    target_id: NeuronId,
+    now: SimTime,
+    config: &CandidateSearchConfig,
+    source_ids: &[NeuronId],
+) -> Result<Vec<Candidate>, CandidateSearchError> {
+    let mut ids = source_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let sources: Result<Vec<_>, _> = ids
+        .into_iter()
+        .map(|id| {
+            network
+                .neuron(id)
+                .ok_or(CandidateSearchError::UnknownSource(id))
+        })
+        .collect();
+    rank_candidates(network, target_id, now, config, sources?.into_iter())
+}
+
+fn rank_candidates<'a>(
+    network: &Network,
+    target_id: NeuronId,
+    now: SimTime,
+    config: &CandidateSearchConfig,
+    sources: impl Iterator<Item = &'a Neuron>,
+) -> Result<Vec<Candidate>, CandidateSearchError> {
     config.validate()?;
     let target = network
         .neuron(target_id)
@@ -117,8 +151,7 @@ pub fn local_candidates(
         .map(|id| network.synapse(*id).expect("adjacency ID is valid").pre())
         .collect();
 
-    let mut candidates: Vec<_> = network
-        .neurons()
+    let mut candidates: Vec<_> = sources
         .filter(|source| source.id() != target_id)
         .filter(|source| !incoming.contains(&source.id()))
         .filter_map(|source| {
@@ -223,6 +256,8 @@ fn finite_non_negative(value: f32, field: &'static str) -> Result<(), CandidateS
 pub enum CandidateSearchError {
     /// The requested growth target is absent from the graph.
     UnknownTarget(NeuronId),
+    /// A source ID supplied by an external index is absent from the graph.
+    UnknownSource(NeuronId),
     /// A score parameter was NaN or infinite.
     NonFinite { field: &'static str, value: f32 },
     /// A non-negative score parameter was negative.
@@ -237,6 +272,7 @@ impl fmt::Display for CandidateSearchError {
             Self::UnknownTarget(id) => {
                 write!(formatter, "unknown candidate-search target {id}")
             }
+            Self::UnknownSource(id) => write!(formatter, "unknown candidate-search source {id}"),
             Self::NonFinite { field, value } => {
                 write!(formatter, "{field} must be finite, got {value}")
             }
@@ -416,6 +452,26 @@ mod tests {
         assert!(
             candidates.is_empty(),
             "no candidate should beat the threshold"
+        );
+    }
+
+    #[test]
+    fn indexed_candidates_keep_identical_scores_and_reject_unknown_sources() {
+        let network = network_with_spikes();
+        let config = CandidateSearchConfig::default();
+        let all = local_candidates(&network, NeuronId(1), SimTime(10), &config).unwrap();
+        let indexed = local_candidates_in(
+            &network,
+            NeuronId(1),
+            SimTime(10),
+            &config,
+            &[NeuronId(3), NeuronId(2), NeuronId(1), NeuronId(2)],
+        )
+        .unwrap();
+        assert_eq!(all, indexed);
+        assert_eq!(
+            local_candidates_in(&network, NeuronId(1), SimTime(10), &config, &[NeuronId(99)]),
+            Err(CandidateSearchError::UnknownSource(NeuronId(99)))
         );
     }
 }

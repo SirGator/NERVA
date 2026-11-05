@@ -43,7 +43,7 @@ pub mod pruning;
 pub mod structural_drive;
 
 pub use candidate_search::{
-    Candidate, CandidateSearchConfig, CandidateSearchError, local_candidates,
+    Candidate, CandidateSearchConfig, CandidateSearchError, local_candidates, local_candidates_in,
 };
 pub use formation::{CreatedSynapse, FormationConfig, FormationError};
 pub use plan::{DevelopmentPlan, DevelopmentPlanError, PlannedFormation, PlannedPruning};
