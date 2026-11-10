@@ -17,7 +17,7 @@ use super::{
 /// the sign exclusively from the presynaptic neuron's [`Polarity`] when a
 /// signed [`SignalStrength`] amplitude is formed. This makes it impossible for
 /// an STDP update to flip cell polarity.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Synapse {
     /// Stable identity of this connection.
     pub(crate) id: SynapseId,
@@ -27,6 +27,8 @@ pub struct Synapse {
     pub(crate) post: NeuronId,
     /// Current non-negative connection magnitude.
     pub(crate) weight: Weight,
+    /// Signed unpublished learning mass; never used directly for propagation.
+    pub(crate) learning_weight_residual: f64,
     /// Strictly positive propagation delay in microseconds.
     pub(crate) delay_us: u64,
     /// Whether a local learning rule may change this connection.
@@ -81,6 +83,41 @@ pub struct Synapse {
     pub(crate) utility_updated_at: Option<SimTime>,
 }
 
+// Preserve the historical zero-carry Debug representation used by CPU fixtures.
+// Nonzero carry is replay state and remains visible in diagnostic snapshots.
+impl fmt::Debug for Synapse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut state = f.debug_struct("Synapse");
+        state.field("id", &self.id);
+        state.field("pre", &self.pre);
+        state.field("post", &self.post);
+        state.field("weight", &self.weight);
+        state.field("delay_us", &self.delay_us);
+        state.field("plastic", &self.plastic);
+        state.field("enabled", &self.enabled);
+        state.field("pre_trace", &self.pre_trace);
+        state.field("pre_trace_updated_at", &self.pre_trace_updated_at);
+        state.field("learning_eligibility", &self.learning_eligibility);
+        state.field(
+            "learning_eligibility_updated_at",
+            &self.learning_eligibility_updated_at,
+        );
+        state.field("short_term", &self.short_term);
+        state.field("transmission_count", &self.transmission_count);
+        state.field("utility_eligibility", &self.utility_eligibility);
+        state.field(
+            "utility_eligibility_updated_at",
+            &self.utility_eligibility_updated_at,
+        );
+        state.field("utility", &self.utility);
+        state.field("utility_updated_at", &self.utility_updated_at);
+        if self.learning_weight_residual != 0. {
+            state.field("learning_weight_residual", &self.learning_weight_residual);
+        }
+        state.finish()
+    }
+}
+
 impl Synapse {
     /// Constructs an enabled synapse with an empty local trace.
     pub fn new(
@@ -99,6 +136,7 @@ impl Synapse {
             pre,
             post,
             weight,
+            learning_weight_residual: 0.,
             delay_us,
             plastic,
             enabled: true,
@@ -133,6 +171,11 @@ impl Synapse {
     /// Current non-negative connection magnitude.
     pub const fn weight(&self) -> Weight {
         self.weight
+    }
+
+    /// Synapse-local f64 mass awaiting a representable f32 weight change.
+    pub const fn learning_weight_residual(&self) -> f64 {
+        self.learning_weight_residual
     }
 
     /// Strictly positive propagation delay in microseconds.
@@ -220,6 +263,9 @@ impl Synapse {
         if !self.learning_eligibility.is_finite() {
             return Err(SynapseError::InvalidLearningEligibility);
         }
+        if !self.learning_weight_residual.is_finite() {
+            return Err(SynapseError::InvalidLearningResidual);
+        }
         if let Some((config, state)) = self.short_term {
             config.validate().map_err(SynapseError::ShortTerm)?;
             state.validate().map_err(SynapseError::ShortTerm)?;
@@ -262,6 +308,19 @@ impl Synapse {
     pub fn set_weight(&mut self, weight: Weight) -> Result<(), SynapseError> {
         validate_weight(weight)?;
         self.weight = weight;
+        self.learning_weight_residual = 0.;
+        Ok(())
+    }
+
+    /// Frozen diagnostic intervention: replace only the transmitted weight,
+    /// retaining unpublished learning mass so restoring weights restores replay.
+    /// Ordinary authoritative edits should use `set_weight` to clear the carry.
+    pub fn set_weight_preserving_learning_residual(
+        &mut self,
+        weight: Weight,
+    ) -> Result<(), SynapseError> {
+        validate_weight(weight)?;
+        self.weight = weight;
         Ok(())
     }
 
@@ -302,6 +361,7 @@ impl Synapse {
 
         let clamped = proposed.clamp_to(min_weight, max_weight);
         self.weight = clamped;
+        self.learning_weight_residual = 0.;
         Ok(clamped)
     }
 
@@ -519,6 +579,8 @@ pub enum SynapseError {
     ShortTerm(ShortTermError),
     /// Signed learning eligibility must be finite.
     InvalidLearningEligibility,
+    /// Unpublished learning mass must remain finite.
+    InvalidLearningResidual,
     /// A weight magnitude is NaN or infinite.
     NonFiniteWeight(f32),
     /// A negative weight would duplicate/violate presynaptic polarity.
@@ -577,6 +639,9 @@ impl fmt::Display for SynapseError {
             Self::ShortTerm(error) => write!(formatter, "short-term release: {error}"),
             Self::InvalidLearningEligibility => {
                 formatter.write_str("non-finite signed learning eligibility")
+            }
+            Self::InvalidLearningResidual => {
+                formatter.write_str("non-finite learning weight residual")
             }
             Self::NonFiniteWeight(value) => {
                 write!(formatter, "synaptic weight must be finite, got {value}")

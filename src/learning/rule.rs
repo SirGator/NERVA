@@ -1,6 +1,7 @@
 //! Runtime-facing boundary for local plasticity.
 
 use crate::core::{Neuron, Polarity, SimTime, Synapse};
+use crate::primitives::Weight;
 
 /// Read-only prediction of one delayed local update, before f32 rounding/bounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -9,6 +10,15 @@ pub struct DelayedLearningUpdate {
     pub decayed_tag: f32,
     pub tag_integral_seconds: f64,
     pub unrounded_delta: f64,
+    /// Preview of the exact f32 value published by this integration.
+    pub next_weight: Weight,
+    /// Signed unpublished mass before and after this time integration.
+    pub residual_before: f64,
+    pub residual_after: f64,
+    /// Signed mass rejected by weight bounds; never retained as hidden debt.
+    pub clipped_delta: f64,
+    /// Signed difference after accounting for actual, residual and clipped mass.
+    pub rounding_error: f64,
 }
 
 /// A local learning rule notified by the event runtime.

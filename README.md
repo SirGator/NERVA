@@ -48,6 +48,12 @@ early development and may change between releases.
 
 ## Local chemistry and heterogeneous tissue
 
+The opt-in [synapse-local weight accumulator](docs/weight-accumulation.md)
+preserves small requested learning contributions while transmitted weights
+remain f32. Historical direct publication stays the default; the
+[paired harness comparison](../NERVA_Modell/research/PRECISION.md) measures
+numerical retention, spike effects and controlled association separately.
+
 Optional [neuromodulation and tissue profiles](docs/neuromodulation.md) extend the
 same neuron physics with spatial chemical fields, receptor effects, delayed
 three-factor STDP and synapse-local facilitation. The default cortical dynamics

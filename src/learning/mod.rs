@@ -20,6 +20,8 @@ pub mod rule;
 pub mod traces;
 /// Synapse-local structural utility evidence and memory boundary.
 pub mod utility;
+/// Opt-in compensated publication of synaptic learning mass.
+pub mod weight_update;
 
 pub use bounds::{WeightBounds, WeightBoundsError};
 pub use competition::{CompetitionError, CompetitionEvent, CompetitionPool, IncomingCompetition};
@@ -29,3 +31,4 @@ pub use pair_stdp::{PairStdp, PairStdpError, ThreeFactorConfig};
 pub use rule::{DelayedLearningUpdate, NoPlasticity, PlasticityRule};
 pub use traces::{DecayingTrace, TraceError};
 pub use utility::{NoUtility, UtilityContext, UtilityDynamicsConfig, UtilityRule, UtilityTrigger};
+pub use weight_update::WeightUpdateMode;

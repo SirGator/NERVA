@@ -25,6 +25,8 @@ pub enum LearningAuditEvent {
         held_signal: f32,
         old_weight: Weight,
         new_weight: Weight,
+        residual_before: f64,
+        residual_after: f64,
         delayed: Option<DelayedLearningUpdate>,
     },
     ChemicalSample {
@@ -61,6 +63,12 @@ pub struct DelayedLearningSummary {
     pub max_signal: Option<f32>,
     pub first_nonzero_signal_us: Option<u64>,
     pub last_nonzero_signal_us: Option<u64>,
+    pub first_residual: Option<f64>,
+    pub last_residual: Option<f64>,
+    pub positive_clipped: f64,
+    pub negative_clipped: f64,
+    pub positive_rounding_error: f64,
+    pub negative_rounding_error: f64,
 }
 impl DelayedLearningSummary {
     fn record(&mut self, event: &LearningAuditEvent) {
@@ -70,6 +78,8 @@ impl DelayedLearningSummary {
             held_signal,
             old_weight,
             new_weight,
+            residual_before,
+            residual_after,
             delayed,
             ..
         } = event
@@ -77,6 +87,8 @@ impl DelayedLearningSummary {
             return;
         };
         self.integrations += 1;
+        self.first_residual.get_or_insert(*residual_before);
+        self.last_residual = Some(*residual_after);
         self.first_us.get_or_insert(time.0);
         self.last_us = Some(time.0);
         self.peak_abs_tag = self.peak_abs_tag.max(tag_before.abs());
@@ -94,6 +106,10 @@ impl DelayedLearningSummary {
             self.last_nonzero_signal_us = Some(time.0);
         }
         if let Some(update) = delayed {
+            self.positive_clipped += update.clipped_delta.max(0.);
+            self.negative_clipped += update.clipped_delta.min(0.);
+            self.positive_rounding_error += update.rounding_error.max(0.);
+            self.negative_rounding_error += update.rounding_error.min(0.);
             self.positive_tag_integral += update.tag_integral_seconds.max(0.);
             self.negative_tag_integral += update.tag_integral_seconds.min(0.);
             self.positive_requested += update.unrounded_delta.max(0.);
@@ -196,6 +212,7 @@ pub(super) struct TraceState {
     tag: f32,
     anchor: Option<SimTime>,
     weight: Weight,
+    residual: f64,
 }
 impl TraceState {
     pub fn read(edge: &Synapse) -> Self {
@@ -204,6 +221,7 @@ impl TraceState {
             tag: edge.learning_eligibility(),
             anchor: edge.learning_eligibility_updated_at(),
             weight: edge.weight(),
+            residual: edge.learning_weight_residual(),
         }
     }
     pub fn finish(
@@ -214,7 +232,11 @@ impl TraceState {
         held_signal: f32,
         delayed: Option<DelayedLearningUpdate>,
     ) -> Option<LearningAuditEvent> {
-        if self.tag == 0. && edge.learning_eligibility() == 0. && self.weight == edge.weight() {
+        if self.tag == 0.
+            && edge.learning_eligibility() == 0.
+            && self.weight == edge.weight()
+            && self.residual == edge.learning_weight_residual()
+        {
             return None;
         }
         Some(LearningAuditEvent::Trace {
@@ -227,6 +249,8 @@ impl TraceState {
             held_signal,
             old_weight: self.weight,
             new_weight: edge.weight(),
+            residual_before: self.residual,
+            residual_after: edge.learning_weight_residual(),
             delayed,
         })
     }

@@ -20,6 +20,7 @@ use super::{
     bounds::{WeightBounds, WeightBoundsError},
     rule::{DelayedLearningUpdate, PlasticityRule},
     traces::{DecayingTrace, decay_value},
+    weight_update::{WeightUpdateMode, publish},
 };
 
 /// Optional delayed local learning: signed pair tags are integrated against
@@ -92,6 +93,7 @@ impl Error for PairStdpError {}
 pub struct PairStdp {
     enabled: bool,
     three_factor: Option<ThreeFactorConfig>,
+    weight_update_mode: WeightUpdateMode,
     a_plus: f32,
     a_minus: f32,
     tau_plus_us: f32,
@@ -130,6 +132,7 @@ impl PairStdp {
         Ok(Self {
             enabled: config.enabled,
             three_factor: None,
+            weight_update_mode: WeightUpdateMode::DirectF32,
             a_plus: config.a_plus,
             a_minus: config.a_minus,
             tau_plus_us: config.tau_plus_us,
@@ -155,13 +158,36 @@ impl PairStdp {
         self.three_factor
     }
 
+    /// Select only numerical publication; pair timing and eligibility stay unchanged.
+    pub fn with_weight_update_mode(mut self, mode: WeightUpdateMode) -> Self {
+        self.weight_update_mode = mode;
+        self
+    }
+
+    /// Numerical publication policy, independent of pair and eligibility timing.
+    pub const fn weight_update_mode(&self) -> WeightUpdateMode {
+        self.weight_update_mode
+    }
+
+    fn apply_weight_delta(&self, synapse: &mut Synapse, delta: f64) {
+        let update = publish(
+            synapse.weight,
+            synapse.learning_weight_residual,
+            delta,
+            self.bounds,
+            self.weight_update_mode,
+        );
+        synapse.weight = update.weight;
+        synapse.learning_weight_residual = update.residual;
+    }
+
     fn apply_pair_delta(&self, synapse: &mut Synapse, post: &Neuron, time: SimTime, delta: f32) {
         if let Some(config) = self.three_factor {
             self.advance_eligibility(synapse, post, time, true);
             synapse.learning_eligibility = (synapse.learning_eligibility + delta)
                 .clamp(-config.max_abs_eligibility, config.max_abs_eligibility);
         } else {
-            synapse.weight = self.bounds.apply_delta(synapse.weight, delta);
+            self.apply_weight_delta(synapse, f64::from(delta));
         }
     }
 
@@ -176,10 +202,8 @@ impl PairStdp {
             return;
         };
         if update.apply_weight {
-            let delta = update
-                .unrounded_delta
-                .clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32;
-            synapse.weight = self.bounds.apply_delta(synapse.weight, delta);
+            synapse.weight = update.next_weight;
+            synapse.learning_weight_residual = update.residual_after;
         }
         synapse.learning_eligibility = update.decayed_tag;
         synapse.learning_eligibility_updated_at = Some(time);
@@ -275,11 +299,32 @@ impl PlasticityRule for PairStdp {
         } else {
             0.
         };
+        let publication = if apply_weight {
+            publish(
+                synapse.weight,
+                synapse.learning_weight_residual,
+                unrounded_delta,
+                self.bounds,
+                self.weight_update_mode,
+            )
+        } else {
+            super::weight_update::Publication {
+                weight: synapse.weight,
+                residual: synapse.learning_weight_residual,
+                clipped_delta: 0.,
+                rounding_error: 0.,
+            }
+        };
         Some(DelayedLearningUpdate {
             apply_weight,
             decayed_tag: (f64::from(synapse.learning_eligibility) * fraction.exp()) as f32,
             tag_integral_seconds,
             unrounded_delta,
+            next_weight: publication.weight,
+            residual_before: synapse.learning_weight_residual,
+            residual_after: publication.residual,
+            clipped_delta: publication.clipped_delta,
+            rounding_error: publication.rounding_error,
         })
     }
 
