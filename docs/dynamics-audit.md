@@ -35,3 +35,8 @@ Tests compare audited and unaudited native trajectories, cover simultaneous
 excitation/inhibition, reset, refractory rejection and continuous decay, and
 compare the full replay state of a chemically active model.
 
+The [direction/strength factorial study](../../NERVA_Modell/research/DIRECTION_STRENGTH.md)
+reuses these observations while independently varying weight-delta direction
+and L2 strength. It checks bounds and published f32 norm/direction fidelity
+before interpreting effects. Recurrent relay searches change existing core
+weights only; no additional library dynamics or learning mechanisms are needed.
