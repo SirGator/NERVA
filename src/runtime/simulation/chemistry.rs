@@ -153,10 +153,20 @@ impl<R: PlasticityRule> Simulation<R> {
         }
         let mut changed = Vec::with_capacity(states.len());
         for (id, response) in states {
-            self.network
-                .neuron_mut(id)
-                .unwrap()
-                .set_modulation(time, response)?;
+            let cell = self.network.neuron_mut(id).unwrap();
+            let from = cell.last_update();
+            let potential_before = cell.membrane_potential();
+            cell.set_modulation(time, response)?;
+            if self.dynamics_auditing {
+                self.event_log
+                    .push(super::ObservationEvent::NeuronAdvanced {
+                        time,
+                        target: id,
+                        from,
+                        potential_before,
+                        potential_after: cell.membrane_potential(),
+                    });
+            }
             changed.push(id);
         }
         self.ensure_chemical_update(time)?;

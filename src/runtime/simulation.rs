@@ -41,6 +41,27 @@ mod chemistry;
 /// Immutable diagnostic output published by the runtime.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObservationEvent {
+    /// Opt-in continuous evolution, measured before simultaneous input integration.
+    NeuronAdvanced {
+        time: SimTime,
+        target: NeuronId,
+        from: SimTime,
+        potential_before: f32,
+        potential_after: f32,
+    },
+    /// Opt-in exact batch boundary. The input sum uses the backend's canonical order.
+    NeuronIntegrated {
+        time: SimTime,
+        target: NeuronId,
+        potential_before: f32,
+        potential_after: f32,
+        threshold: f32,
+        refractory_until: SimTime,
+        summed_input: f32,
+        positive_input: f64,
+        negative_input: f64,
+        spiked: bool,
+    },
     /// A root- or nerve-provided impulse reached a core neuron.
     ExternalInput {
         /// Exact arrival timestamp.
@@ -408,6 +429,7 @@ pub struct Simulation<R: PlasticityRule> {
     network: Network,
     chemical_field: Option<ChemicalField>,
     learning_audit: Option<LearningAudit>,
+    dynamics_auditing: bool,
     chemical_booking: Option<(SimTime, u64)>,
     compute: Box<dyn ComputeBackend>,
     profile: Option<RuntimeProfile>,
@@ -480,6 +502,7 @@ impl<R: PlasticityRule> Simulation<R> {
             network,
             chemical_field: None,
             learning_audit: None,
+            dynamics_auditing: false,
             chemical_booking: None,
             compute: Box::new(CpuCompute),
             profile: None,
@@ -1112,6 +1135,12 @@ impl<R: PlasticityRule> Simulation<R> {
         self.event_log.events()
     }
 
+    /// Enable read-only electrical boundary observations. Disabled by default;
+    /// callers must drain the event log regularly. Excluded from replay state.
+    pub fn set_dynamics_auditing(&mut self, enabled: bool) {
+        self.dynamics_auditing = enabled;
+    }
+
     /// Removes and returns the current observation log without touching neural state.
     pub fn drain_event_log(&mut self) -> EventLog {
         std::mem::take(&mut self.event_log)
@@ -1555,12 +1584,30 @@ impl<R: PlasticityRule> Simulation<R> {
         let mut state = self.measure(ProfilePhase::AdvanceExport, |simulation| {
             DenseNeuronBatch::from_network(&simulation.network, &neurons.affected)
         })?;
+        let before = self.dynamics_auditing.then(|| {
+            state
+                .states()
+                .iter()
+                .map(|s| (s.last_update, s.membrane_potential))
+                .collect::<Vec<_>>()
+        });
         let result = self.measure(ProfilePhase::AdvanceCompute, |simulation| {
             simulation.compute.advance_neurons(&mut state, time)
         });
         self.measure(ProfilePhase::AdvancePublish, |simulation| {
             state.complete(&mut simulation.network, result)
         })?;
+        if let Some(before) = before {
+            for (&target, (from, potential_before)) in neurons.affected.iter().zip(before) {
+                self.event_log.push(ObservationEvent::NeuronAdvanced {
+                    time,
+                    target,
+                    from,
+                    potential_before,
+                    potential_after: self.network.neuron(target).unwrap().membrane_potential(),
+                });
+            }
+        }
         let inputs = self.measure(ProfilePhase::Arrivals, |simulation| {
             simulation.process_arrivals(time, &events)
         })?;
@@ -1813,14 +1860,52 @@ impl<R: PlasticityRule> Simulation<R> {
                     .observe((offsets[1] - offsets[0]) as usize);
             }
         }
+        let before = self.dynamics_auditing.then(|| {
+            inputs
+                .neuron_ids()
+                .iter()
+                .map(|&id| {
+                    let n = self.network.neuron(id).expect("exported neuron exists");
+                    (n.membrane_potential(), n.threshold(), n.refractory_until())
+                })
+                .collect::<Vec<_>>()
+        });
         let result = self.measure(ProfilePhase::IntegrateCompute, |simulation| {
             simulation
                 .compute
                 .integrate_neurons(&mut state, &mut inputs, time)
         });
-        Ok(self.measure(ProfilePhase::IntegratePublish, |simulation| {
+        let spikes = self.measure(ProfilePhase::IntegratePublish, |simulation| {
             state.complete(&mut simulation.network, result)
-        })?)
+        })?;
+        if let Some(before) = before {
+            for (row, (&target, (potential_before, threshold, refractory_until))) in
+                inputs.neuron_ids().iter().zip(before).enumerate()
+            {
+                let amplitudes = inputs.row(row).expect("validated input row");
+                self.event_log.push(ObservationEvent::NeuronIntegrated {
+                    time,
+                    target,
+                    potential_before,
+                    potential_after: self.network.neuron(target).unwrap().membrane_potential(),
+                    threshold,
+                    refractory_until,
+                    summed_input: amplitudes.iter().map(|&v| f64::from(v)).sum::<f64>() as f32,
+                    positive_input: amplitudes
+                        .iter()
+                        .filter(|&&v| v > 0.)
+                        .map(|&v| f64::from(v))
+                        .sum(),
+                    negative_input: amplitudes
+                        .iter()
+                        .filter(|&&v| v < 0.)
+                        .map(|&v| f64::from(v))
+                        .sum(),
+                    spiked: spikes.iter().any(|s| s.neuron_id == target),
+                });
+            }
+        }
+        Ok(spikes)
     }
 
     fn record_batch_spikes(

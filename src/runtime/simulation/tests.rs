@@ -37,6 +37,95 @@ fn one_neuron_network() -> Network {
     network
 }
 
+#[test]
+fn electrical_audit_observes_cancellation_reset_leak_and_refractory_without_changing_replay() {
+    fn setup(audit: bool) -> Simulation<crate::learning::PairStdp> {
+        let mut params = neuron_params();
+        params.refractory_period_us = 100;
+        let mut network = Network::new();
+        network
+            .add_neuron(
+                Neuron::new(
+                    NeuronId(1),
+                    Position3D::ORIGIN,
+                    Polarity::Excitatory,
+                    None,
+                    params,
+                    SimTime::ZERO,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut s = simulation(network, crate::learning::PairStdp::new(&Default::default()));
+        s.freeze_learning();
+        s.set_dynamics_auditing(audit);
+        for (time, amplitude) in [
+            (10, 1.2),
+            (10, -0.5),
+            (20, 0.5),
+            (21, 2.),
+            (200, 0.2),
+            (500, 0.1),
+        ] {
+            s.schedule_external_input(SimTime(time), NeuronId(1), amplitude)
+                .unwrap();
+        }
+        s
+    }
+    let mut plain = setup(false);
+    let mut audited = setup(true);
+    plain.run().unwrap();
+    audited.run().unwrap();
+    assert!(plain.same_replay_state(&audited));
+    assert!(
+        !plain
+            .event_log()
+            .iter()
+            .any(|e| matches!(e, ObservationEvent::NeuronIntegrated { .. }))
+    );
+    let boundaries: Vec<_> = audited
+        .event_log()
+        .iter()
+        .filter(|e| matches!(e, ObservationEvent::NeuronIntegrated { .. }))
+        .collect();
+    assert_eq!(boundaries.len(), 5);
+    assert!(matches!(boundaries[0],ObservationEvent::NeuronIntegrated {
+        time:SimTime(10),positive_input,negative_input,spiked:false,potential_after,..}
+        if *positive_input>1. && *negative_input<0. && *potential_after<1.));
+    assert!(matches!(
+        boundaries[1],
+        ObservationEvent::NeuronIntegrated {
+            spiked: true,
+            potential_after: 0.,
+            ..
+        }
+    ));
+    assert!(matches!(
+        boundaries[2],
+        ObservationEvent::NeuronIntegrated {
+            time: SimTime(21),
+            refractory_until: SimTime(120),
+            spiked: false,
+            potential_after: 0.,
+            ..
+        }
+    ));
+    assert!(audited.event_log().iter().any(|e|matches!(e,ObservationEvent::NeuronAdvanced {
+        time:SimTime(500),potential_before,potential_after,..} if potential_after<potential_before)));
+    let filtered: Vec<_> = audited
+        .event_log()
+        .iter()
+        .filter(|e| {
+            !matches!(
+                e,
+                ObservationEvent::NeuronIntegrated { .. } | ObservationEvent::NeuronAdvanced { .. }
+            )
+        })
+        .cloned()
+        .collect();
+    assert_eq!(plain.event_log(), filtered);
+}
+
 fn connected_network(source_polarity: Polarity) -> Network {
     let mut network = Network::new();
     network.add_neuron(neuron(1, source_polarity)).unwrap();
