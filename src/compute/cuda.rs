@@ -102,7 +102,7 @@ impl CudaCompute {
             .ok_or(ComputeError::InvalidBatch {
                 reason: "CUDA batch exceeds device indexing range",
             })?;
-        let mut sf = vec![0.0_f32; n * 10];
+        let mut sf = vec![0.0_f32; n * 12];
         let mut st = vec![0_u64; n * 6];
         let mut pf = vec![0.0_f32; n * 14];
         let mut pt = Vec::with_capacity(n);
@@ -118,6 +118,8 @@ impl CudaCompute {
                 s.threshold_adaptation,
                 s.intrinsic_current,
                 s.structural_drive,
+                s.threshold_modulation,
+                s.current_modulation,
             ]
             .into_iter()
             .enumerate()
@@ -235,6 +237,8 @@ impl CudaCompute {
             s.threshold_adaptation = sf[7 * n + row];
             s.intrinsic_current = sf[8 * n + row];
             s.structural_drive = sf[9 * n + row];
+            s.threshold_modulation = sf[10 * n + row];
+            s.current_modulation = sf[11 * n + row];
             s.last_update = SimTime(st[row]);
             s.refractory_until = SimTime(st[n + row]);
             s.last_spike_time = st[2 * n + row];

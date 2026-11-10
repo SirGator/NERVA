@@ -68,6 +68,8 @@ pub mod learning;
 pub mod math;
 /// Fixed nerve fibers, bundles, mappings and routing.
 pub mod nerves;
+/// Local chemical volume transmission and heterogeneous receptor responses.
+pub mod neuromodulation;
 /// Policy-free identities, values, geometry, and exact simulation time.
 pub mod primitives;
 /// Stable sensory and motor connection points.
@@ -103,3 +105,6 @@ mod metrics;
 /// Neutral CSV/JSON state export.
 #[cfg(feature = "visualization")]
 pub mod visualization;
+
+/// Continuous spatial construction profiles over the common neuron physics.
+pub mod cell_profiles;

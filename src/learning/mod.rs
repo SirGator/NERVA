@@ -6,6 +6,8 @@
 
 /// Hard bounds for non-negative synaptic weight magnitudes.
 pub mod bounds;
+/// Optional fixed-budget competition among excitatory incoming synapses.
+pub mod competition;
 /// Excitatory causal utility rule.
 pub mod excitatory_utility;
 /// Per-neuron cellular and structural homeostasis.
@@ -20,9 +22,10 @@ pub mod traces;
 pub mod utility;
 
 pub use bounds::{WeightBounds, WeightBoundsError};
+pub use competition::{CompetitionError, CompetitionEvent, CompetitionPool, IncomingCompetition};
 pub use excitatory_utility::ExcitatoryCausalUtility;
 pub use homeostasis::{HomeostasisError, HomeostaticChange, LocalHomeostasis};
-pub use pair_stdp::{PairStdp, PairStdpError};
-pub use rule::{NoPlasticity, PlasticityRule};
+pub use pair_stdp::{PairStdp, PairStdpError, ThreeFactorConfig};
+pub use rule::{DelayedLearningUpdate, NoPlasticity, PlasticityRule};
 pub use traces::{DecayingTrace, TraceError};
 pub use utility::{NoUtility, UtilityContext, UtilityDynamicsConfig, UtilityRule, UtilityTrigger};

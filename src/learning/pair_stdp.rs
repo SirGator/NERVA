@@ -9,7 +9,7 @@
 //! previous spike. An all-to-all trace formulation is a deliberate future
 //! extension, not a property of this rule.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{
     config::LearningConfig,
@@ -18,13 +18,52 @@ use crate::{
 
 use super::{
     bounds::{WeightBounds, WeightBoundsError},
-    rule::PlasticityRule,
+    rule::{DelayedLearningUpdate, PlasticityRule},
     traces::{DecayingTrace, decay_value},
 };
+
+/// Optional delayed local learning: signed pair tags are integrated against
+/// the postsynaptic receptor signal rather than immediately changing weights.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThreeFactorConfig {
+    /// Exponential eligibility lifetime in microseconds.
+    pub eligibility_tau_us: f32,
+    /// Weight change per eligibility × local signal × second.
+    pub learning_rate: f32,
+    /// Symmetric bound on the signed eligibility trace.
+    pub max_abs_eligibility: f32,
+}
+impl Default for ThreeFactorConfig {
+    fn default() -> Self {
+        Self {
+            eligibility_tau_us: 500_000.,
+            learning_rate: 1.,
+            max_abs_eligibility: 10.,
+        }
+    }
+}
+impl ThreeFactorConfig {
+    /// Bounds numerical state without introducing any reward or task label.
+    pub fn validate(self) -> Result<(), PairStdpError> {
+        if !self.eligibility_tau_us.is_finite()
+            || self.eligibility_tau_us <= 0.
+            || !self.learning_rate.is_finite()
+            || !(0. ..=1_000_000.).contains(&self.learning_rate)
+            || !self.max_abs_eligibility.is_finite()
+            || self.max_abs_eligibility <= 0.
+            || self.max_abs_eligibility > 1_000_000.
+        {
+            return Err(PairStdpError::InvalidThreeFactorConfig);
+        }
+        Ok(())
+    }
+}
 
 /// Invalid parameters supplied directly to [`PairStdp`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PairStdpError {
+    /// Invalid finite bounds or time constants for delayed learning.
+    InvalidThreeFactorConfig,
     /// Potentiation and depression amplitudes must be finite and non-negative.
     InvalidLearningAmplitude,
     /// Both trace time constants must be finite and strictly positive.
@@ -34,6 +73,13 @@ pub enum PairStdpError {
     /// The weight interval is not a valid non-negative magnitude interval.
     InvalidWeightBounds(WeightBoundsError),
 }
+
+impl fmt::Display for PairStdpError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "invalid local STDP configuration: {self:?}")
+    }
+}
+impl Error for PairStdpError {}
 
 /// Pair-STDP state shared by local hooks in one network runtime.
 ///
@@ -45,6 +91,7 @@ pub enum PairStdpError {
 #[derive(Debug, PartialEq)]
 pub struct PairStdp {
     enabled: bool,
+    three_factor: Option<ThreeFactorConfig>,
     a_plus: f32,
     a_minus: f32,
     tau_plus_us: f32,
@@ -82,6 +129,7 @@ impl PairStdp {
 
         Ok(Self {
             enabled: config.enabled,
+            three_factor: None,
             a_plus: config.a_plus,
             a_minus: config.a_minus,
             tau_plus_us: config.tau_plus_us,
@@ -92,6 +140,49 @@ impl PairStdp {
             last_pre_spikes: HashMap::new(),
             last_post_spikes: HashMap::new(),
         })
+    }
+
+    /// Selects delayed three-factor learning while retaining the same nearest-
+    /// pair timing rule. The default constructor remains immediate Pair-STDP.
+    pub fn with_three_factor(mut self, config: ThreeFactorConfig) -> Result<Self, PairStdpError> {
+        config.validate()?;
+        self.three_factor = Some(config);
+        Ok(self)
+    }
+
+    /// Active delayed-learning parameters, or none on the original baseline.
+    pub const fn three_factor_config(&self) -> Option<ThreeFactorConfig> {
+        self.three_factor
+    }
+
+    fn apply_pair_delta(&self, synapse: &mut Synapse, post: &Neuron, time: SimTime, delta: f32) {
+        if let Some(config) = self.three_factor {
+            self.advance_eligibility(synapse, post, time, true);
+            synapse.learning_eligibility = (synapse.learning_eligibility + delta)
+                .clamp(-config.max_abs_eligibility, config.max_abs_eligibility);
+        } else {
+            synapse.weight = self.bounds.apply_delta(synapse.weight, delta);
+        }
+    }
+
+    fn advance_eligibility(
+        &self,
+        synapse: &mut Synapse,
+        post: &Neuron,
+        time: SimTime,
+        enabled: bool,
+    ) {
+        let Some(update) = self.delayed_update_diagnostics(synapse, post, time, enabled) else {
+            return;
+        };
+        if update.apply_weight {
+            let delta = update
+                .unrounded_delta
+                .clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32;
+            synapse.weight = self.bounds.apply_delta(synapse.weight, delta);
+        }
+        synapse.learning_eligibility = update.decayed_tag;
+        synapse.learning_eligibility_updated_at = Some(time);
     }
 
     /// Enables or freezes this rule without replacing it in the runtime.
@@ -151,6 +242,47 @@ impl PairStdp {
 }
 
 impl PlasticityRule for PairStdp {
+    fn needs_time_updates(&self) -> bool {
+        self.three_factor.is_some()
+    }
+
+    fn advance_time(&mut self, synapse: &mut Synapse, post: &Neuron, time: SimTime, enabled: bool) {
+        self.advance_eligibility(synapse, post, time, enabled);
+    }
+
+    fn delayed_update_diagnostics(
+        &self,
+        synapse: &Synapse,
+        post: &Neuron,
+        time: SimTime,
+        enabled: bool,
+    ) -> Option<DelayedLearningUpdate> {
+        let config = self.three_factor?;
+        let elapsed = match synapse.learning_eligibility_updated_at {
+            Some(previous) => time.duration_since(previous)?,
+            None => 0,
+        };
+        let fraction = -(elapsed as f64) / f64::from(config.eligibility_tau_us);
+        let tag_integral_seconds = f64::from(synapse.learning_eligibility)
+            * f64::from(config.eligibility_tau_us)
+            * 1e-6
+            * -fraction.exp_m1();
+        let apply_weight = enabled && self.eligible(synapse);
+        let unrounded_delta = if apply_weight {
+            f64::from(config.learning_rate)
+                * tag_integral_seconds
+                * f64::from(post.modulation().learning_signal)
+        } else {
+            0.
+        };
+        Some(DelayedLearningUpdate {
+            apply_weight,
+            decayed_tag: (f64::from(synapse.learning_eligibility) * fraction.exp()) as f32,
+            tag_integral_seconds,
+            unrounded_delta,
+        })
+    }
+
     fn accepts(&self, synapse: &Synapse, presynaptic_polarity: crate::core::Polarity) -> bool {
         presynaptic_polarity == crate::core::Polarity::Excitatory && self.eligible(synapse)
     }
@@ -186,7 +318,7 @@ impl PlasticityRule for PairStdp {
             .and_then(|post_time| self.within_window(time, post_time))
         {
             let delta = -self.a_minus * decay_factor(elapsed_us, self.tau_minus_us);
-            synapse.weight = self.bounds.apply_delta(synapse.weight, delta);
+            self.apply_pair_delta(synapse, post, time, delta);
         }
 
         // The arriving spike contributes only after LTD has paired it with a
@@ -226,7 +358,7 @@ impl PlasticityRule for PairStdp {
                 .and_then(|pre_time| self.within_window(time, pre_time))
             {
                 let delta = self.a_plus * decay_factor(elapsed_us, self.tau_plus_us);
-                synapse.weight = self.bounds.apply_delta(synapse.weight, delta);
+                self.apply_pair_delta(synapse, neuron, time, delta);
             }
         }
 

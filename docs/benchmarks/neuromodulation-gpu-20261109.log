@@ -1,0 +1,18 @@
+   Compiling nerva v0.1.0 (/home/simon/projekte/active/Big/DSVLM/main/NERVA)
+    Finished `release` profile [optimized] target(s) in 1.34s
+     Running tests/cuda_compute.rs (NERVA/target/release/deps/cuda_compute-dcf59644103b6399)
+
+running 4 tests
+test cuda_preserves_numerical_error_prefix_and_handles_empty_batches ... ok
+test cuda_runs_endogenous_chemistry_delayed_learning_and_short_term_release ... neuromodulated batches=128 spikes=32 pulses=48 identical events/synapses/chemistry; max_abs_error=0.00000011920929
+ok
+test cuda_runs_real_simulation_with_stdp_and_utility ... simulation batches=48 spikes=24 identical event log and synapses
+CPU batch total_us=87.694; CUDA batch total_us=26196.658
+ok
+test thousands_of_seeded_states_match_cpu_and_replay_on_cuda ... device=NVIDIA GeForce RTX 3060
+advance rows=8192 max_abs_error=0.0000076293945
+integrate rows=8192 spikes=825 max_abs_error=0.000030517578
+ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.38s
+

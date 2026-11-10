@@ -7,6 +7,19 @@ pub use crate::primitives::{SimTime, SimTimeError};
 /// Payload of an event consumed by the runtime.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EventKind {
+    /// A local test release or externally supplied chemical source event.
+    /// Normal endogenous release is caused by the source neuron's own spikes.
+    ChemicalRelease {
+        /// Source position is read from this neuron when the release occurs.
+        source: NeuronId,
+        /// Chemical identity, separate from the source identity.
+        species: super::ChemicalSpecies,
+        /// Nonnegative mass in abstract model units.
+        amount: f32,
+    },
+    /// Optional slow concentration/receptor refresh; absent on the baseline.
+    ChemicalUpdate,
+
     /// A root or nerve contributes directly to an input neuron.
     ExternalInput {
         /// Receiving neuron.

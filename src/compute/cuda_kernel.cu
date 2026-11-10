@@ -3,7 +3,7 @@ typedef unsigned long long U64;
 static constexpr float MAX_F = 3.4028234663852886e38f;
 
 struct State {
-    float v, activity, input, threshold, burst, adaptation, rebound, threshold_adaptation, current, structural;
+    float v, activity, input, threshold, burst, adaptation, rebound, threshold_adaptation, current, structural, threshold_modulation, current_modulation;
     U64 updated, refractory, last_spike, spike_valid, spikes, homeostasis;
 };
 struct Params {
@@ -23,6 +23,16 @@ __device__ double response(float current, float current_tau_us, float tau_us, U6
     return (double)current * tm * tc / (tc - tm) * (exp(-t / tc) - exp(-t / tm));
 }
 
+__device__ float held_current(const State &s) {
+    return s.current_modulation == 0.0f ? s.current : s.current + s.current_modulation;
+}
+__device__ double constant_current(const State &s, const Params &p) {
+    double current = (double)p.drive + (double)s.current;
+    return s.current_modulation == 0.0f ? current : current + (double)s.current_modulation;
+}
+__device__ float base_threshold(const State &s) {
+    return s.threshold_modulation == 0.0f ? s.threshold : s.threshold + s.threshold_modulation;
+}
 __device__ bool advance(State &s, const Params &p, U64 time) {
     if (time < s.updated) return false;
     U64 dt = time - s.updated;
@@ -30,15 +40,15 @@ __device__ bool advance(State &s, const Params &p, U64 time) {
     bool active = p.drive != 0.0f || p.burst_gain != 0.0f || p.adaptation_gain != 0.0f
         || p.threshold_gain != 0.0f || p.rebound_gain != 0.0f;
     if (!active) {
-        float equilibrium = p.rest + s.current * (p.tau / 1000000.0f);
+        float equilibrium = p.rest + held_current(s) * (p.tau / 1000000.0f);
         if (!isfinite(equilibrium)) return false;
         s.v = equilibrium + (s.v - equilibrium) * expf(-((float)dt) / p.tau);
     } else {
-        double equilibrium = (double)p.rest + ((double)p.drive + (double)s.current) * (double)p.tau / 1000000.0;
+        double equilibrium = (double)p.rest + constant_current(s, p) * (double)p.tau / 1000000.0;
         if (!isfinite(equilibrium) || fabs(equilibrium) > (double)MAX_F) return false;
         double t = (double)dt / 1000000.0;
         double tm = (double)p.tau / 1000000.0;
-        double eq = (double)p.rest + ((double)p.drive + (double)s.current) * tm;
+        double eq = (double)p.rest + constant_current(s, p) * tm;
         double v = eq + ((double)s.v - eq) * exp(-t / tm);
         v += response(s.burst, p.burst_tau, p.tau, dt);
         v -= response(s.adaptation, p.adaptation_tau, p.tau, dt);
@@ -72,7 +82,7 @@ __device__ unsigned integrate(State &s, const Params &p, U64 time, float sum, fl
     float v = s.v + sum;
     if (!isfinite(v)) return 2;
     float rebound;
-    if (v < s.threshold + s.threshold_adaptation) {
+    if (v < base_threshold(s) + s.threshold_adaptation) {
         if (!checked_add(s.rebound, p.rebound_gain * inhibitory, rebound)) return 2;
         s.v = v; s.rebound = rebound;
         return 0;
@@ -99,6 +109,7 @@ extern "C" __global__ void nerva_compute(float *sf, U64 *st, const float *pf, co
     s.v=sf[0*n+row]; s.activity=sf[1*n+row]; s.input=sf[2*n+row]; s.threshold=sf[3*n+row];
     s.burst=sf[4*n+row]; s.adaptation=sf[5*n+row]; s.rebound=sf[6*n+row];
     s.threshold_adaptation=sf[7*n+row]; s.current=sf[8*n+row]; s.structural=sf[9*n+row];
+    s.threshold_modulation=sf[10*n+row]; s.current_modulation=sf[11*n+row];
     s.updated=st[0*n+row]; s.refractory=st[1*n+row]; s.last_spike=st[2*n+row];
     s.spike_valid=st[3*n+row]; s.spikes=st[4*n+row]; s.homeostasis=st[5*n+row];
     Params p;
@@ -112,6 +123,7 @@ extern "C" __global__ void nerva_compute(float *sf, U64 *st, const float *pf, co
     sf[0*n+row]=s.v; sf[1*n+row]=s.activity; sf[2*n+row]=s.input; sf[3*n+row]=s.threshold;
     sf[4*n+row]=s.burst; sf[5*n+row]=s.adaptation; sf[6*n+row]=s.rebound;
     sf[7*n+row]=s.threshold_adaptation; sf[8*n+row]=s.current; sf[9*n+row]=s.structural;
+    sf[10*n+row]=s.threshold_modulation; sf[11*n+row]=s.current_modulation;
     st[0*n+row]=s.updated; st[1*n+row]=s.refractory; st[2*n+row]=s.last_spike;
     st[3*n+row]=s.spike_valid; st[4*n+row]=s.spikes; st[5*n+row]=s.homeostasis;
 }

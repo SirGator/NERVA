@@ -15,6 +15,8 @@ pub mod intrinsic;
 pub mod network;
 /// Leaky integrate-and-fire neuron state.
 pub mod neuron;
+/// Optional synapse-local release dynamics.
+pub mod short_term;
 /// Emitted spike records.
 pub mod spike;
 /// Directed synaptic connection state.
@@ -26,5 +28,13 @@ pub use ids::{NeuronId, SynapseId};
 pub use intrinsic::IntrinsicState;
 pub use network::{Network, NetworkError};
 pub use neuron::{HomeostaticState, Neuron, NeuronError, NeuronRole, Polarity};
+pub use short_term::{ShortTermConfig, ShortTermError, ShortTermState};
 pub use spike::Spike;
 pub use synapse::{Synapse, SynapseError};
+
+/// Passive receptor profiles, chemical identities and held cellular effects.
+pub mod modulation;
+pub use modulation::{
+    ChemicalError, ChemicalSpecies, Concentrations, ModulationState, ReceptorProfile,
+    ReleaseProfile,
+};

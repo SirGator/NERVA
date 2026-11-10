@@ -14,7 +14,7 @@ use nerva::{
     runtime::Simulation,
 };
 
-fn floats(s: &ComputeNeuronState) -> [f32; 10] {
+fn floats(s: &ComputeNeuronState) -> [f32; 12] {
     [
         s.membrane_potential,
         s.activity_trace,
@@ -26,6 +26,8 @@ fn floats(s: &ComputeNeuronState) -> [f32; 10] {
         s.threshold_adaptation,
         s.intrinsic_current,
         s.structural_drive,
+        s.threshold_modulation,
+        s.current_modulation,
     ]
 }
 
@@ -124,6 +126,8 @@ fn thousands_of_seeded_states_match_cpu_and_replay_on_cuda() {
         let mut state = cell.numerical_state();
         state.membrane_potential = random.next() * 1.5 - 0.5;
         state.threshold += 0.1;
+        state.threshold_modulation = (id as i32 % 7 - 3) as f32 * 0.05;
+        state.current_modulation = (id as i32 % 11 - 5) as f32 * 0.5;
         state.activity_trace = random.next() * 3.0;
         state.input_trace = random.next() * 5.0;
         state.burst_drive = random.next() * 100.0;
@@ -324,4 +328,108 @@ fn cuda_preserves_numerical_error_prefix_and_handles_empty_batches() {
     );
     assert_eq!(cpu, cuda);
     assert_eq!(inputs, gpu_inputs);
+}
+
+#[test]
+#[ignore = "requires NVIDIA GPU and NVRTC; run explicitly with --ignored --nocapture"]
+fn cuda_runs_endogenous_chemistry_delayed_learning_and_short_term_release() {
+    use nerva::{
+        core::ShortTermConfig,
+        learning::ThreeFactorConfig,
+        neuromodulation::{ChemicalConfig, ModulationState, ReceptorProfile, ReleaseProfile},
+    };
+    let mut network = small_network();
+    for id in 0..16 {
+        network
+            .neuron_mut(NeuronId(id))
+            .unwrap()
+            .set_receptor_profile(ReceptorProfile {
+                dopamine_d1_like: if id % 2 == 1 { 0.75 } else { 0.25 },
+                dopamine_d2_like: 0.1,
+                acetylcholine: 0.2,
+                noradrenaline: 0.2,
+            })
+            .unwrap();
+        if id % 3 == 0 {
+            network
+                .synapse_mut(SynapseId(id))
+                .unwrap()
+                .set_short_term(Some(ShortTermConfig {
+                    utilization: 0.2,
+                    facilitation_increment: 0.15,
+                    recovery_tau_us: 100_000.,
+                    facilitation_tau_us: 500_000.,
+                }))
+                .unwrap();
+        }
+    }
+    for id in [0, 8] {
+        network
+            .neuron_mut(NeuronId(id))
+            .unwrap()
+            .set_release_profile(ReleaseProfile {
+                dopamine: 0.001,
+                acetylcholine: 0.001,
+                noradrenaline: 0.001,
+            })
+            .unwrap();
+    }
+    let initial: Vec<_> = network.synapses().map(|edge| edge.weight()).collect();
+    let make = |network| {
+        Simulation::new(
+            network,
+            PairStdp::new(&LearningConfig::default())
+                .with_three_factor(ThreeFactorConfig::default())
+                .unwrap(),
+            RuntimeConfig::default(),
+            1.,
+        )
+        .unwrap()
+        .with_neuromodulation(ChemicalConfig::default())
+        .unwrap()
+    };
+    let mut cpu = make(network.clone());
+    let mut gpu = make(network).with_compute_backend(CudaCompute::new(0).unwrap());
+    for round in 0..8 {
+        for (offset, id) in [(1_000, 0), (6_000, 1), (10_000, 8), (15_000, 9)] {
+            let at = SimTime(round * 20_000 + offset);
+            cpu.schedule_external_input(at, NeuronId(id), 1.3).unwrap();
+            gpu.schedule_external_input(at, NeuronId(id), 1.3).unwrap();
+        }
+    }
+    let report = cpu.run_until(SimTime(400_000)).unwrap();
+    assert_eq!(report, gpu.run_until(SimTime(400_000)).unwrap());
+    assert_eq!(cpu.event_log(), gpu.event_log());
+    assert_eq!(cpu.chemical_field(), gpu.chemical_field());
+    assert!(cpu.chemical_field().unwrap().pulse_count() > 0);
+    assert_ne!(
+        cpu.network().neuron(NeuronId(1)).unwrap().modulation(),
+        ModulationState::default()
+    );
+    let cells = |sim: &Simulation<PairStdp>| {
+        sim.network()
+            .neurons()
+            .map(Neuron::numerical_state)
+            .collect::<Vec<_>>()
+    };
+    let max_error = close(&cells(&cpu), &cells(&gpu));
+    let cpu_edges: Vec<_> = cpu.network().synapses().collect();
+    assert_eq!(cpu_edges, gpu.network().synapses().collect::<Vec<_>>());
+    assert!(cpu_edges.iter().any(|e| {
+        e.short_term()
+            .is_some_and(|(_, state)| state.updated_at.is_some())
+    }));
+    assert!(cpu_edges.iter().zip(initial).any(|(e, w)| e.weight() != w));
+    assert!(
+        cpu.event_log()
+            .iter()
+            .any(|e| matches!(e, nerva::runtime::ObservationEvent::WeightChanged { .. }))
+    );
+    println!(
+        "neuromodulated batches={} spikes={} pulses={} identical events/synapses/chemistry; max_abs_error={}",
+        report.batches_processed,
+        report.spikes_emitted,
+        cpu.chemical_field().unwrap().pulse_count(),
+        max_error
+    );
 }

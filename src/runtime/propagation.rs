@@ -21,6 +21,8 @@ pub struct PlannedTransmission {
 pub enum PropagationError {
     /// The spike source is absent from the network.
     UnknownSourceNeuron(NeuronId),
+    /// Receptor gain and release overflowed an otherwise valid weight.
+    NonFiniteAmplitude(SynapseId),
     /// An outgoing adjacency index references no synapse.
     UnknownSynapse(SynapseId),
     /// A synapse endpoint is absent from the network.
@@ -50,6 +52,9 @@ pub enum PropagationError {
 impl fmt::Display for PropagationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NonFiniteAmplitude(id) => {
+                write!(formatter, "non-finite modulated amplitude at synapse {id}")
+            }
             Self::UnknownSourceNeuron(id) => write!(formatter, "unknown spike source neuron {id}"),
             Self::UnknownSynapse(id) => write!(formatter, "unknown outgoing synapse {id}"),
             Self::UnknownTargetNeuron(id) => write!(formatter, "unknown target neuron {id}"),
@@ -141,10 +146,23 @@ pub(crate) fn plan_spike_propagation_into(
         let distance = source_position.distance_to(target.position());
         let attenuation = try_distance_attenuation(distance, distance_decay_length)
             .map_err(PropagationError::InvalidAttenuation)?;
-        let amplitude = synapse
+        let mut amplitude = synapse
             .effective_amplitude(source_polarity, attenuation)
             .map_err(PropagationError::InvalidSynapse)?
             .get();
+        let release = synapse
+            .predicted_release_gain(spike.time)
+            .map_err(PropagationError::InvalidSynapse)?;
+        let transmission = source.modulation().transmission_gain;
+        if release != 1. {
+            amplitude *= release;
+        }
+        if transmission != 1. {
+            amplitude *= transmission;
+        }
+        if !amplitude.is_finite() {
+            return Err(PropagationError::NonFiniteAmplitude(synapse_id));
+        }
         let arrives_at = spike.time.checked_add_us(synapse.delay_us()).ok_or(
             PropagationError::ArrivalTimeOverflow {
                 emitted_at: spike.time,

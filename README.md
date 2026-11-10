@@ -10,6 +10,10 @@ simulation tick, backpropagation, global loss, or reward signal.
 
 ## Use as a library
 
+Commands in this README run from `main/NERVA/`, next to this package's
+`Cargo.toml`. For the complete project, see the [project overview](../README.md),
+[setup guide](../Doku/EINSTIEG.md), and [development workflow](../Doku/ENTWICKLUNG.md).
+
 Add a local dependency to your application's `Cargo.toml`, adjusting `path` to
 the directory containing NERVA's `Cargo.toml`:
 
@@ -42,11 +46,22 @@ Optional Cargo features expose additional library modules:
 The default build uses no external crate dependencies. The public API is in
 early development and may change between releases.
 
+## Local chemistry and heterogeneous tissue
+
+Optional [neuromodulation and tissue profiles](docs/neuromodulation.md) extend the
+same neuron physics with spatial chemical fields, receptor effects, delayed
+three-factor STDP and synapse-local facilitation. The default cortical dynamics
+remain the reference. A dependency-free integrated library example is available:
+
+```bash
+cargo run --offline --release --example neuromodulated_tissue
+```
+
 ## Public slices
 
 - `primitives`, `math`, and `config`: policy-free foundations and validation
 - `core`: neurons, synapses, spikes, and deterministic graph state
-- `learning`: local Pair-STDP and per-neuron homeostasis
+- `learning`: local Pair-STDP, optional incoming-weight competition, and per-neuron homeostasis
 - `runtime`: deterministic timestamp batches and spike propagation
 - `compute`: synchronous numerical backend boundary with deterministic `CpuCompute`
 - `io`, `roots`, `transduction`, and `nerves`: device-neutral external connections
@@ -226,6 +241,16 @@ cargo test --release --features cuda --test cuda_compute -- --ignored --nocaptur
 
 Ordinary test runs leave these three hardware tests ignored instead of silently
 reporting a GPU pass. See [measured results and commands](docs/profiling.md).
+
+Fixed-budget incoming competition is opt-in through
+`Simulation::with_incoming_competition(&population)`. It captures each target's
+initial sum of enabled plastic excitatory weights within that population,
+normalizes changed pools after all timestamp-local learning hooks and before
+propagation, and follows the runtime learning switch. Weights remain in 0..=2;
+existing queued arrivals retain their emission amplitudes. Pool membership is
+fixed and violations fail the runtime. `competition_pools` and
+`drain_competition_events` expose budgets and separate learning/normalization
+records. Existing simulations do not install this mechanism.
 
 ## M0 reference experiment
 

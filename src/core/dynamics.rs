@@ -39,6 +39,10 @@ pub struct NeuronDynamicsState {
     pub spike_count: u64,
     /// Mutable base threshold before transient adaptation.
     pub threshold: f32,
+    /// Held receptor-dependent threshold offset, independent of homeostasis.
+    pub threshold_modulation: f32,
+    /// Held receptor-dependent current in potential units per second.
+    pub current_modulation: f32,
     /// Spike-triggered positive current.
     pub burst_drive: f32,
     /// Spike-triggered negative current magnitude.
@@ -160,6 +164,8 @@ impl NeuronDynamicsState {
             && self.rebound_drive.to_bits() == other.rebound_drive.to_bits()
             && self.threshold_adaptation.to_bits() == other.threshold_adaptation.to_bits()
             && self.intrinsic_current.to_bits() == other.intrinsic_current.to_bits()
+            && self.threshold_modulation.to_bits() == other.threshold_modulation.to_bits()
+            && self.current_modulation.to_bits() == other.current_modulation.to_bits()
             && self.structural_drive.to_bits() == other.structural_drive.to_bits()
             && self.last_homeostasis_update == other.last_homeostasis_update
     }
@@ -170,6 +176,8 @@ impl NeuronDynamicsState {
             ("activity_trace", self.activity_trace),
             ("input_trace", self.input_trace),
             ("threshold", self.threshold),
+            ("threshold_modulation", self.threshold_modulation),
+            ("current_modulation", self.current_modulation),
             ("burst_drive", self.burst_drive),
             ("adaptation_drive", self.adaptation_drive),
             ("rebound_drive", self.rebound_drive),
@@ -196,15 +204,32 @@ impl NeuronDynamicsState {
         if self.threshold <= params.resting_potential || self.threshold <= params.reset_potential {
             return Err(NeuronError::InvalidThreshold(self.threshold));
         }
+        if !(-2. ..=2.).contains(&self.threshold_modulation)
+            || !(-112. ..=112.).contains(&self.current_modulation)
+        {
+            return Err(NeuronError::InvalidModulation);
+        }
+        let effective_base = checked_effective_sum(
+            "modulated_base_threshold",
+            self.threshold,
+            self.threshold_modulation,
+        )?;
+        if effective_base <= params.resting_potential || effective_base <= params.reset_potential {
+            return Err(NeuronError::InvalidThreshold(effective_base));
+        }
         checked_effective_sum(
             "effective_threshold",
-            self.threshold,
+            effective_base,
             self.threshold_adaptation,
         )?;
         checked_effective_sum(
             "effective_intrinsic_drive",
             params.intrinsic_drive,
-            self.intrinsic_current,
+            checked_effective_sum(
+                "modulated_intrinsic_current",
+                self.intrinsic_current,
+                self.current_modulation,
+            )?,
         )?;
         if self.last_spike_valid > 1
             || (self.last_spike_valid == 0 && (self.last_spike_time != 0 || self.spike_count != 0))
@@ -218,8 +243,30 @@ impl NeuronDynamicsState {
         Ok(())
     }
 
+    fn modulated_base_threshold(&self) -> f32 {
+        if self.threshold_modulation == 0. {
+            self.threshold
+        } else {
+            self.threshold + self.threshold_modulation
+        }
+    }
+    fn held_current(&self) -> f32 {
+        if self.current_modulation == 0. {
+            self.intrinsic_current
+        } else {
+            self.intrinsic_current + self.current_modulation
+        }
+    }
+    fn constant_current(&self, params: &NeuronDynamicsParams) -> f64 {
+        let current = f64::from(params.intrinsic_drive) + f64::from(self.intrinsic_current);
+        if self.current_modulation == 0. {
+            current
+        } else {
+            current + f64::from(self.current_modulation)
+        }
+    }
     fn threshold(&self) -> f32 {
-        self.threshold + self.threshold_adaptation
+        self.modulated_base_threshold() + self.threshold_adaptation
     }
     fn is_refractory_at(&self, time: SimTime) -> bool {
         time < self.refractory_until
@@ -244,7 +291,7 @@ impl NeuronDynamicsState {
             // Preserve the original f32 LIF path bit-for-bit when all new
             // capabilities use their backward-compatible defaults.
             let intrinsic_equilibrium = params.resting_potential
-                + self.intrinsic_current * (params.membrane_tau_us / 1_000_000.0);
+                + self.held_current() * (params.membrane_tau_us / 1_000_000.0);
             if !intrinsic_equilibrium.is_finite() {
                 return Err(NeuronError::NonFiniteIntrinsicEquilibrium(
                     intrinsic_equilibrium,
@@ -348,7 +395,11 @@ impl NeuronDynamicsState {
             self.threshold_adaptation,
             params.threshold_adaptation_gain,
         )?;
-        checked_effective_sum("effective_threshold", self.threshold, threshold_adaptation)?;
+        checked_effective_sum(
+            "effective_threshold",
+            self.modulated_base_threshold(),
+            threshold_adaptation,
+        )?;
         let rebound_drive = checked_intrinsic_sum(
             "rebound_drive",
             self.rebound_drive,
@@ -445,8 +496,7 @@ impl NeuronDynamicsState {
         let elapsed_seconds = elapsed_us as f64 / 1_000_000.0;
         let membrane_tau_seconds = f64::from(params.membrane_tau_us) / 1_000_000.0;
         let resting = f64::from(params.resting_potential);
-        let constant_current =
-            f64::from(params.intrinsic_drive) + f64::from(self.intrinsic_current);
+        let constant_current = self.constant_current(params);
         let equilibrium = resting + constant_current * membrane_tau_seconds;
         let membrane_decay = (-elapsed_seconds / membrane_tau_seconds).exp();
         let mut potential =
@@ -479,7 +529,7 @@ impl NeuronDynamicsState {
         elapsed_us: u64,
     ) -> bool {
         let potential = self.projected_membrane_potential(params, elapsed_us) as f32;
-        let threshold = self.threshold
+        let threshold = self.modulated_base_threshold()
             + decay_to_zero(
                 self.threshold_adaptation,
                 elapsed_us,
@@ -497,9 +547,7 @@ impl NeuronDynamicsState {
 
     fn constant_intrinsic_equilibrium(&self, params: &NeuronDynamicsParams) -> f64 {
         f64::from(params.resting_potential)
-            + (f64::from(params.intrinsic_drive) + f64::from(self.intrinsic_current))
-                * f64::from(params.membrane_tau_us)
-                / 1_000_000.0
+            + self.constant_current(params) * f64::from(params.membrane_tau_us) / 1_000_000.0
     }
 
     fn predict_constant_drive_crossing(
@@ -509,11 +557,11 @@ impl NeuronDynamicsState {
         first_eligible: u64,
     ) -> Option<SimTime> {
         let equilibrium = self.constant_intrinsic_equilibrium(params);
-        if !equilibrium.is_finite() || equilibrium <= f64::from(self.threshold) {
+        if !equilibrium.is_finite() || equilibrium <= f64::from(self.modulated_base_threshold()) {
             return None;
         }
 
-        let numerator = f64::from(self.threshold) - equilibrium;
+        let numerator = f64::from(self.modulated_base_threshold()) - equilibrium;
         let denominator = f64::from(self.membrane_potential) - equilibrium;
         let ratio = numerator / denominator;
         if !(0.0..1.0).contains(&ratio) {
@@ -532,12 +580,13 @@ impl NeuronDynamicsState {
         now: SimTime,
     ) -> Option<SimTime> {
         let tau_seconds = params.membrane_tau_us / 1_000_000.0;
-        let equilibrium = params.resting_potential + self.intrinsic_current * tau_seconds;
-        if !equilibrium.is_finite() || equilibrium <= self.threshold {
+        let equilibrium = params.resting_potential + self.held_current() * tau_seconds;
+        if !equilibrium.is_finite() || equilibrium <= self.modulated_base_threshold() {
             return None;
         }
 
-        let ratio = (self.threshold - equilibrium) / (self.membrane_potential - equilibrium);
+        let ratio = (self.modulated_base_threshold() - equilibrium)
+            / (self.membrane_potential - equilibrium);
         if !(0.0..1.0).contains(&ratio) {
             return None;
         }
@@ -551,7 +600,8 @@ impl NeuronDynamicsState {
 
     fn intrinsic_gap_model(&self, params: &NeuronDynamicsParams) -> IntrinsicGapModel {
         let equilibrium = self.constant_intrinsic_equilibrium(params);
-        let mut model = IntrinsicGapModel::new(equilibrium - f64::from(self.threshold));
+        let mut model =
+            IntrinsicGapModel::new(equilibrium - f64::from(self.modulated_base_threshold()));
         model.add_term(
             params.membrane_tau_us,
             f64::from(self.membrane_potential) - equilibrium,

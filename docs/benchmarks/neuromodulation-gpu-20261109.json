@@ -1,0 +1,39 @@
+{
+  "schema": "NERVA-CUDA-Neuromodulation-Verification/1",
+  "date": "2026-11-09",
+  "device": "NVIDIA GeForce RTX3060",
+  "driver": "610.60",
+  "runtime": {
+    "package": "nvidia-cuda-nvrtc-cu12",
+    "version": "12.8.93",
+    "wheel": "nvidia_cuda_nvrtc_cu12-12.8.93-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl",
+    "sha256": "a7756528852ef889772a84c6cd89d41dfa74667e24cca16bb31f8f061e3e9994",
+    "source": "https://pypi.org/project/nvidia-cuda-nvrtc-cu12/12.8.93/",
+    "isolated_runtime": "/tmp/nerva-nvrtc-12.8.93",
+    "global_python_or_system_installation_changed": false
+  },
+  "gpu_tests_passed": 4,
+  "integrated_case": {
+    "batches": 128,
+    "spikes": 32,
+    "chemical_pulses": 48,
+    "event_log_synapses_chemical_field_exact_equal": true,
+    "max_neuron_absolute_error": 1.1920929e-07
+  },
+  "seeded_rows": 8192,
+  "numeric_envelope": {
+    "absolute_tolerance": 2e-05,
+    "relative_tolerance": 2e-06,
+    "advance_max_absolute_error": 7.6293945e-06,
+    "integrate_max_absolute_error": 3.0517578e-05,
+    "discrete_spikes_and_replay_equal": true
+  },
+  "default_backend": "CPU",
+  "performance_scope": "Tiny 16-cell reference only; measured GPU transfer overhead is larger than CPU work. No general acceleration claim.",
+  "sources_sha256": {
+    "src/compute/cuda.rs": "ca43d7a8071d4cad23b552c36d70f25cee37b63a24dfd6c9a2c452ef313ab7ee",
+    "src/compute/cuda_kernel.cu": "860528b4d39e1aba5cb49768789d091b5f95f1e2473457b94e5fe897461e4597",
+    "tests/cuda_compute.rs": "671c7aeadbe90bf248f72e1797d39eee9d1dd1744af0583a84bbac8104efaa6b"
+  },
+  "supersedes": "Missing NVRTC runtime limitation recorded earlier on 2026-11-09; historical reports remain unchanged."
+}

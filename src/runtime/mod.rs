@@ -6,6 +6,8 @@ pub mod event_batch;
 mod homeostasis_booking;
 /// Runtime-only autonomous-spike booking registry.
 mod intrinsic_booking;
+/// Optional bounded local-learning observations.
+pub mod learning_audit;
 /// Opt-in distributions and host wall-clock measurements.
 pub mod profile;
 /// Delayed and distance-attenuated spike propagation.
@@ -21,4 +23,11 @@ pub use propagation::{PlannedTransmission, PropagationError, plan_spike_propagat
 pub use scheduler::{EventScheduler, SchedulerError};
 pub use simulation::{
     BatchReport, EventLog, ObservationEvent, RunReport, Simulation, SimulationError,
+};
+
+#[cfg(test)]
+mod competition_tests;
+
+pub use learning_audit::{
+    DelayedLearningSummary, LearningAuditError, LearningAuditEvent, LearningAuditLog, LearningPhase,
 };

@@ -7,7 +7,9 @@ use crate::{
     primitives::{SignalStrength, Weight},
 };
 
-use super::{NeuronId, Polarity, SimTime, SynapseId};
+use super::{
+    NeuronId, Polarity, ShortTermConfig, ShortTermError, ShortTermState, SimTime, SynapseId,
+};
 
 /// A directed connection whose weight is always a non-negative magnitude.
 ///
@@ -35,6 +37,11 @@ pub struct Synapse {
     pub(crate) pre_trace: f32,
     /// Timestamp to which [`Self::pre_trace`] has been decayed.
     pub(crate) pre_trace_updated_at: Option<SimTime>,
+    /// Signed STDP learning eligibility, independent of structural utility.
+    pub(crate) learning_eligibility: f32,
+    /// Time anchor of the signed learning eligibility.
+    pub(crate) learning_eligibility_updated_at: Option<SimTime>,
+    short_term: Option<(ShortTermConfig, ShortTermState)>,
     /// Number of arrivals recorded for local diagnostics/statistics.
     pub(crate) transmission_count: u64,
     /// Synapse-local **utility eligibility trace** `e_ij`.
@@ -97,6 +104,9 @@ impl Synapse {
             enabled: true,
             pre_trace: 0.0,
             pre_trace_updated_at: None,
+            learning_eligibility: 0.,
+            learning_eligibility_updated_at: None,
+            short_term: None,
             transmission_count: 0,
             utility_eligibility: 0.0,
             utility_eligibility_updated_at: None,
@@ -155,10 +165,65 @@ impl Synapse {
         self.transmission_count
     }
 
+    /// Signed nearest-pair learning tag; it is not structural utility.
+    pub const fn learning_eligibility(&self) -> f32 {
+        self.learning_eligibility
+    }
+
+    /// Last time the optional three-factor rule advanced the learning tag.
+    pub const fn learning_eligibility_updated_at(&self) -> Option<SimTime> {
+        self.learning_eligibility_updated_at
+    }
+
+    /// Local release parameters and state, absent on neutral baseline edges.
+    pub const fn short_term(&self) -> Option<(ShortTermConfig, ShortTermState)> {
+        self.short_term
+    }
+
+    /// Parameters of this connection's release mechanism, without dynamic state.
+    pub fn short_term_config(&self) -> Option<ShortTermConfig> {
+        self.short_term.map(|(config, _)| config)
+    }
+
+    /// Predicts one release without consuming resources; used by pure planners.
+    pub fn predicted_release_gain(&self, at: SimTime) -> Result<f32, SynapseError> {
+        match self.short_term {
+            Some((config, mut state)) => state.release(config, at).map_err(SynapseError::ShortTerm),
+            None => Ok(1.),
+        }
+    }
+
+    /// Configures or removes release dynamics, starting a fresh resource pool.
+    pub fn set_short_term(&mut self, config: Option<ShortTermConfig>) -> Result<(), SynapseError> {
+        self.short_term = match config {
+            Some(config) => Some((
+                config,
+                ShortTermState::new(config).map_err(SynapseError::ShortTerm)?,
+            )),
+            None => None,
+        };
+        Ok(())
+    }
+
+    /// Emission-time release gain. Absent dynamics is exactly the historical 1.
+    pub fn release_gain(&mut self, at: SimTime) -> Result<f32, SynapseError> {
+        match &mut self.short_term {
+            Some((config, state)) => state.release(*config, at).map_err(SynapseError::ShortTerm),
+            None => Ok(1.),
+        }
+    }
+
     /// Revalidates invariants after trusted crate-internal state restoration.
     pub fn validate(&self) -> Result<(), SynapseError> {
         validate_weight(self.weight)?;
         validate_delay(self.delay_us)?;
+        if !self.learning_eligibility.is_finite() {
+            return Err(SynapseError::InvalidLearningEligibility);
+        }
+        if let Some((config, state)) = self.short_term {
+            config.validate().map_err(SynapseError::ShortTerm)?;
+            state.validate().map_err(SynapseError::ShortTerm)?;
+        }
         if !self.pre_trace.is_finite() || self.pre_trace < 0.0 {
             return Err(SynapseError::InvalidPreTrace(self.pre_trace));
         }
@@ -450,6 +515,10 @@ fn validate_delay(delay_us: u64) -> Result<(), SynapseError> {
 /// Invalid synapse construction or local state transition.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SynapseError {
+    /// Optional release dynamics rejected a configuration or time transition.
+    ShortTerm(ShortTermError),
+    /// Signed learning eligibility must be finite.
+    InvalidLearningEligibility,
     /// A weight magnitude is NaN or infinite.
     NonFiniteWeight(f32),
     /// A negative weight would duplicate/violate presynaptic polarity.
@@ -505,6 +574,10 @@ pub enum SynapseError {
 impl fmt::Display for SynapseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ShortTerm(error) => write!(formatter, "short-term release: {error}"),
+            Self::InvalidLearningEligibility => {
+                formatter.write_str("non-finite signed learning eligibility")
+            }
             Self::NonFiniteWeight(value) => {
                 write!(formatter, "synaptic weight must be finite, got {value}")
             }

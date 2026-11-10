@@ -9,7 +9,8 @@ use crate::{
 };
 
 use super::{
-    IntrinsicState, NeuronId, SimTime, Spike,
+    ChemicalError, IntrinsicState, ModulationState, NeuronId, ReceptorProfile, ReleaseProfile,
+    SimTime, Spike,
     dynamics::{NeuronDynamicsParams, NeuronDynamicsState, checked_effective_sum},
 };
 
@@ -80,6 +81,9 @@ pub struct Neuron {
     polarity: Polarity,
     role: Option<NeuronRole>,
     params: NeuronConfig,
+    receptors: ReceptorProfile,
+    release: ReleaseProfile,
+    modulation: ModulationState,
     membrane_potential: f32,
     last_update: SimTime,
     refractory_until: SimTime,
@@ -119,6 +123,9 @@ impl Neuron {
             polarity,
             role,
             params,
+            receptors: ReceptorProfile::default(),
+            release: ReleaseProfile::default(),
+            modulation: ModulationState::default(),
             membrane_potential: params.resting_potential,
             last_update: start_time,
             refractory_until: start_time,
@@ -149,6 +156,8 @@ impl Neuron {
             last_spike_valid: u32::from(self.last_spike.is_some()),
             spike_count: self.spike_count,
             threshold: self.threshold,
+            threshold_modulation: self.modulation.threshold_shift,
+            current_modulation: self.modulation.intrinsic_drive,
             burst_drive: self.burst_drive,
             adaptation_drive: self.adaptation_drive,
             rebound_drive: self.rebound_drive,
@@ -195,6 +204,8 @@ impl Neuron {
         self.input_trace = state.input_trace;
         self.spike_count = state.spike_count;
         self.threshold = state.threshold;
+        self.modulation.threshold_shift = state.threshold_modulation;
+        self.modulation.intrinsic_drive = state.current_modulation;
         self.burst_drive = state.burst_drive;
         self.adaptation_drive = state.adaptation_drive;
         self.rebound_drive = state.rebound_drive;
@@ -228,6 +239,71 @@ impl Neuron {
     /// Immutable electrical parameters.
     pub const fn params(&self) -> &NeuronConfig {
         &self.params
+    }
+
+    /// Receptor sensitivities, independent of current chemical concentrations.
+    pub const fn receptor_profile(&self) -> ReceptorProfile {
+        self.receptors
+    }
+
+    /// Per-spike chemical release, separate from classical synaptic polarity.
+    pub const fn release_profile(&self) -> ReleaseProfile {
+        self.release
+    }
+
+    pub const fn modulation(&self) -> ModulationState {
+        self.modulation
+    }
+
+    pub fn set_receptor_profile(&mut self, profile: ReceptorProfile) -> Result<(), ChemicalError> {
+        profile.validate()?;
+        self.receptors = profile;
+        Ok(())
+    }
+
+    pub fn set_release_profile(&mut self, profile: ReleaseProfile) -> Result<(), ChemicalError> {
+        profile.validate()?;
+        self.release = profile;
+        Ok(())
+    }
+
+    /// Advance under the old held effects, then replace receptor effects at this
+    /// boundary. The runtime must refresh intrinsic spike bookings afterwards.
+    /// Homeostatic threshold/current remain independent. A threshold reduction
+    /// is limited to the next representable value above resting/reset potential.
+    pub fn set_modulation(
+        &mut self,
+        time: SimTime,
+        mut state: ModulationState,
+    ) -> Result<(), NeuronError> {
+        state
+            .validate()
+            .map_err(|_| NeuronError::InvalidModulation)?;
+        let mut next = self.clone();
+        next.advance_to(time)?;
+        state.threshold_shift =
+            next.bounded_modulation_shift(next.threshold, state.threshold_shift);
+        next.modulation = state;
+        next.numerical_state().validate(&next.numerical_params())?;
+        *self = next;
+        Ok(())
+    }
+
+    fn bounded_modulation_shift(&self, base: f32, shift: f32) -> f32 {
+        let floor = self
+            .params
+            .resting_potential
+            .max(self.params.reset_potential);
+        if shift != 0. && base + shift <= floor {
+            let offset = floor.next_up() - base;
+            if base + offset <= floor {
+                offset.next_up()
+            } else {
+                offset
+            }
+        } else {
+            shift
+        }
     }
 
     /// Current membrane potential.
@@ -288,7 +364,12 @@ impl Neuron {
 
     /// Current local firing threshold, including spike-triggered adaptation.
     pub const fn threshold(&self) -> f32 {
-        self.threshold + self.threshold_adaptation
+        let base = if self.modulation.threshold_shift == 0. {
+            self.threshold
+        } else {
+            self.threshold + self.modulation.threshold_shift
+        };
+        base + self.threshold_adaptation
     }
 
     /// Mutable base threshold before transient spike-triggered adaptation.
@@ -304,7 +385,13 @@ impl Neuron {
     /// Snapshot of all continuously evolving intrinsic quantities.
     pub fn intrinsic_state(&self) -> IntrinsicState {
         IntrinsicState {
-            intrinsic_drive: self.params.intrinsic.intrinsic_drive + self.intrinsic_current,
+            intrinsic_drive: if self.modulation.intrinsic_drive == 0. {
+                self.params.intrinsic.intrinsic_drive + self.intrinsic_current
+            } else {
+                self.params.intrinsic.intrinsic_drive
+                    + self.intrinsic_current
+                    + self.modulation.intrinsic_drive
+            },
             burst_drive: self.burst_drive,
             adaptation_drive: self.adaptation_drive,
             rebound_drive: self.rebound_drive,
@@ -433,6 +520,8 @@ impl Neuron {
             return Err(NeuronError::InvalidThreshold(threshold));
         }
         checked_effective_sum("effective_threshold", threshold, self.threshold_adaptation)?;
+        self.modulation.threshold_shift =
+            self.bounded_modulation_shift(threshold, self.modulation.threshold_shift);
         self.threshold = threshold;
         Ok(())
     }
@@ -647,6 +736,8 @@ pub enum NeuronError {
         /// Inclusive upper bound.
         max: f32,
     },
+    /// A receptor effect was nonfinite or outside its supported bounds.
+    InvalidModulation,
     /// A local current or structural value was non-finite.
     InvalidHomeostaticValue {
         /// Name of the local quantity.
@@ -670,6 +761,7 @@ pub enum NeuronError {
 impl fmt::Display for NeuronError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidModulation => formatter.write_str("invalid local receptor modulation"),
             Self::InvalidNumericalState { field } => {
                 write!(formatter, "invalid numerical neuron state: {field}")
             }
