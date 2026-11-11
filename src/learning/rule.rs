@@ -27,6 +27,11 @@ pub struct DelayedLearningUpdate {
 /// neuron, and incoming synapses of a neuron that just fired. The core does not
 /// depend on this trait.
 pub trait PlasticityRule {
+    /// Effective learning-only signal. Overrides must not mutate cellular modulation.
+    fn learning_signal(&self, post: &Neuron) -> f32 {
+        post.modulation().learning_signal
+    }
+
     /// Whether delayed local state needs advancement even without new pairs.
     /// Neutral rules retain the original event path and incur no graph scan.
     fn needs_time_updates(&self) -> bool {

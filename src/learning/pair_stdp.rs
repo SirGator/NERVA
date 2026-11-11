@@ -65,6 +65,8 @@ impl ThreeFactorConfig {
 pub enum PairStdpError {
     /// Invalid finite bounds or time constants for delayed learning.
     InvalidThreeFactorConfig,
+    /// A learning-only diagnostic override must be finite and bounded.
+    InvalidLearningSignal,
     /// Potentiation and depression amplitudes must be finite and non-negative.
     InvalidLearningAmplitude,
     /// Both trace time constants must be finite and strictly positive.
@@ -93,6 +95,7 @@ impl Error for PairStdpError {}
 pub struct PairStdp {
     enabled: bool,
     three_factor: Option<ThreeFactorConfig>,
+    learning_signal_override: Option<f32>,
     weight_update_mode: WeightUpdateMode,
     a_plus: f32,
     a_minus: f32,
@@ -132,6 +135,7 @@ impl PairStdp {
         Ok(Self {
             enabled: config.enabled,
             three_factor: None,
+            learning_signal_override: None,
             weight_update_mode: WeightUpdateMode::DirectF32,
             a_plus: config.a_plus,
             a_minus: config.a_minus,
@@ -150,6 +154,17 @@ impl PairStdp {
     pub fn with_three_factor(mut self, config: ThreeFactorConfig) -> Result<Self, PairStdpError> {
         config.validate()?;
         self.three_factor = Some(config);
+        Ok(self)
+    }
+
+    /// Explicit diagnostic intervention in the third factor only. Neuron state,
+    /// concentrations, excitability and transmission modulation remain untouched.
+    /// Absent by default; never inferred from reward or task labels.
+    pub fn with_learning_signal_override(mut self, signal: f32) -> Result<Self, PairStdpError> {
+        if !signal.is_finite() || signal.abs() > 1_000_000. {
+            return Err(PairStdpError::InvalidLearningSignal);
+        }
+        self.learning_signal_override = Some(signal);
         Ok(self)
     }
 
@@ -266,6 +281,11 @@ impl PairStdp {
 }
 
 impl PlasticityRule for PairStdp {
+    fn learning_signal(&self, post: &Neuron) -> f32 {
+        self.learning_signal_override
+            .unwrap_or(post.modulation().learning_signal)
+    }
+
     fn needs_time_updates(&self) -> bool {
         self.three_factor.is_some()
     }
@@ -295,7 +315,7 @@ impl PlasticityRule for PairStdp {
         let unrounded_delta = if apply_weight {
             f64::from(config.learning_rate)
                 * tag_integral_seconds
-                * f64::from(post.modulation().learning_signal)
+                * f64::from(self.learning_signal(post))
         } else {
             0.
         };

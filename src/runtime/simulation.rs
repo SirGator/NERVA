@@ -1155,6 +1155,17 @@ impl<R: PlasticityRule> Simulation<R> {
         self.learning_audit = Some(LearningAudit::new(max_records)?);
         Ok(())
     }
+    /// Includes exact delayed-integration boundaries for fixed-history local replay.
+    /// Boundaries count against the same record budget; ordinary audits are unchanged.
+    pub fn enable_learning_replay_audit(
+        &mut self,
+        max_records: usize,
+    ) -> Result<(), LearningAuditError> {
+        self.enable_learning_audit(max_records)?;
+        self.learning_audit.as_mut().unwrap().record_boundaries = true;
+        Ok(())
+    }
+
     pub fn drain_learning_audit(&mut self) -> LearningAuditLog {
         self.learning_audit
             .as_mut()
@@ -1800,7 +1811,7 @@ impl<R: PlasticityRule> Simulation<R> {
                                         synapse,
                                         time,
                                         LearningPhase::PreArrival,
-                                        post.modulation().learning_signal,
+                                        simulation.plasticity_rule.learning_signal(&post),
                                         None,
                                     )
                                 {
@@ -2096,11 +2107,8 @@ impl<R: PlasticityRule> Simulation<R> {
             if let Some(audit) = &mut self.learning_audit {
                 let before = TraceState::read(self.network.synapse(synapse_id).unwrap());
                 let signal = self
-                    .network
-                    .neuron(spike.neuron_id)
-                    .unwrap()
-                    .modulation()
-                    .learning_signal;
+                    .plasticity_rule
+                    .learning_signal(self.network.neuron(spike.neuron_id).unwrap());
                 if let Some(event) =
                     before.finish(&updated, spike.time, LearningPhase::PostSpike, signal, None)
                 {

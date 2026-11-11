@@ -138,6 +138,8 @@ impl DelayedLearningSummary {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LearningAuditLog {
     pub events: Vec<LearningAuditEvent>,
+    /// Optional exact integration boundaries, enabled only for local-rule replay.
+    pub boundaries: Vec<SimTime>,
     pub dropped_events: usize,
     /// Every nonzero-tag time integration is counted, including sub-ULP attempts.
     /// Raw events retain actual weight changes; idle decay is aggregated here.
@@ -166,6 +168,7 @@ impl Error for LearningAuditError {}
 
 pub(super) struct LearningAudit {
     limit: usize,
+    pub record_boundaries: bool,
     pub log: LearningAuditLog,
 }
 impl LearningAudit {
@@ -175,8 +178,19 @@ impl LearningAudit {
         }
         Ok(Self {
             limit,
+            record_boundaries: false,
             log: LearningAuditLog::default(),
         })
+    }
+    pub fn boundary(&mut self, time: SimTime) {
+        if !self.record_boundaries {
+            return;
+        }
+        if self.log.events.len() + self.log.delayed.len() + self.log.boundaries.len() < self.limit {
+            self.log.boundaries.push(time);
+        } else {
+            self.log.dropped_events = self.log.dropped_events.saturating_add(1);
+        }
     }
     pub fn record(&mut self, event: LearningAuditEvent) {
         if let LearningAuditEvent::Trace {
@@ -188,7 +202,8 @@ impl LearningAudit {
         } = &event
         {
             if self.log.delayed.contains_key(synapse)
-                || self.log.events.len() + self.log.delayed.len() < self.limit
+                || self.log.events.len() + self.log.delayed.len() + self.log.boundaries.len()
+                    < self.limit
             {
                 self.log.delayed.entry(*synapse).or_default().record(&event);
             } else {
@@ -198,7 +213,7 @@ impl LearningAudit {
                 return;
             }
         }
-        if self.log.events.len() + self.log.delayed.len() < self.limit {
+        if self.log.events.len() + self.log.delayed.len() + self.log.boundaries.len() < self.limit {
             self.log.events.push(event);
         } else {
             self.log.dropped_events = self.log.dropped_events.saturating_add(1);

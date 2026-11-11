@@ -19,6 +19,9 @@ impl<R: PlasticityRule> Simulation<R> {
         if !self.plasticity_rule.needs_time_updates() {
             return Ok(());
         }
+        if let Some(audit) = &mut self.learning_audit {
+            audit.boundary(time);
+        }
         let ids: Vec<_> = self.network.synapse_ids().collect();
         for id in ids {
             let edge = self.network.synapse(id).unwrap();
@@ -38,6 +41,7 @@ impl<R: PlasticityRule> Simulation<R> {
                     .delayed_update_diagnostics(edge, &post, time, enabled)
             });
             let before = self.learning_audit.as_ref().map(|_| TraceState::read(edge));
+            let held_signal = self.plasticity_rule.learning_signal(&post);
             let edge = self.network.synapse_mut(id).unwrap();
             let old = edge.weight();
             self.plasticity_rule
@@ -46,13 +50,8 @@ impl<R: PlasticityRule> Simulation<R> {
                 .map_err(SimulationError::InvalidNetworkMutation)?;
             let new = edge.weight();
             if let (Some(before), Some(audit)) = (before, &mut self.learning_audit)
-                && let Some(event) = before.finish(
-                    edge,
-                    time,
-                    LearningPhase::Delayed,
-                    post.modulation().learning_signal,
-                    diagnostics,
-                )
+                && let Some(event) =
+                    before.finish(edge, time, LearningPhase::Delayed, held_signal, diagnostics)
             {
                 audit.record(event);
             }

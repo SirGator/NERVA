@@ -63,6 +63,13 @@ remain the reference. A dependency-free integrated library example is available:
 cargo run --offline --release --example neuromodulated_tissue
 ```
 
+Diagnostic studies can explicitly hold only the learning signal with
+`PairStdp::with_learning_signal_override(1.0)`. Cellular receptor effects and
+chemical state remain native. `Simulation::enable_learning_replay_audit(limit)`
+adds bounded integration timestamps for local-rule replay; ordinary audits
+retain their existing behavior. The [multilevel harness](../NERVA_Modell/research/MULTILEVEL_DIAGNOSIS.md)
+checks fixed-history calculations against full native counterfactuals.
+
 ## Public slices
 
 - `primitives`, `math`, and `config`: policy-free foundations and validation
