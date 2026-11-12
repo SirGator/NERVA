@@ -511,6 +511,21 @@ impl Neuron {
         self.integrate_input(time, summed_input)
     }
 
+    /// Change the passive integration time constant at an explicit boundary.
+    /// Evolve to that boundary with the old parameters first. The runtime must
+    /// refresh intrinsic spike predictions after calling this method.
+    pub fn set_membrane_tau_us(&mut self, time: SimTime, tau_us: f32) -> Result<(), NeuronError> {
+        let mut next = self.clone();
+        let mut params = next.params;
+        params.membrane_tau_us = tau_us;
+        params.validate().map_err(NeuronError::InvalidConfig)?;
+        next.advance_to(time)?;
+        next.params = params;
+        next.numerical_state().validate(&next.numerical_params())?;
+        *self = next;
+        Ok(())
+    }
+
     /// Sets the local threshold while preserving the LIF potential ordering.
     pub fn set_threshold(&mut self, threshold: f32) -> Result<(), NeuronError> {
         if !threshold.is_finite() {
@@ -904,6 +919,24 @@ mod tests {
         neuron.advance_to(SimTime(10)).expect("forward time");
 
         close(neuron.membrane_potential(), 0.5 / std::f32::consts::E);
+    }
+
+    #[test]
+    fn changing_integration_tau_advances_with_old_tau_and_rejects_invalid_atomically() {
+        let mut cell = neuron(Polarity::Excitatory);
+        cell.integrate_input(SimTime(0), 0.5).unwrap();
+        let saved = cell.clone();
+        for value in [0., -1., f32::NAN, f32::INFINITY] {
+            assert!(cell.set_membrane_tau_us(SimTime(10), value).is_err());
+            assert_eq!(cell, saved);
+        }
+        cell.set_membrane_tau_us(SimTime(10), 20.).unwrap();
+        close(cell.membrane_potential(), 0.5 / std::f32::consts::E);
+        cell.advance_to(SimTime(30)).unwrap();
+        close(
+            cell.membrane_potential(),
+            0.5 / (std::f32::consts::E * std::f32::consts::E),
+        );
     }
 
     #[test]
