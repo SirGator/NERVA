@@ -10,6 +10,8 @@ pub struct DelayedLearningUpdate {
     pub decayed_tag: f32,
     pub tag_integral_seconds: f64,
     pub unrounded_delta: f64,
+    /// Native request before an optional contribution filter.
+    pub unfiltered_delta: f64,
     /// Preview of the exact f32 value published by this integration.
     pub next_weight: Weight,
     /// Signed unpublished mass before and after this time integration.

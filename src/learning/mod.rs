@@ -31,4 +31,4 @@ pub use pair_stdp::{PairStdp, PairStdpError, ThreeFactorConfig};
 pub use rule::{DelayedLearningUpdate, NoPlasticity, PlasticityRule};
 pub use traces::{DecayingTrace, TraceError};
 pub use utility::{NoUtility, UtilityContext, UtilityDynamicsConfig, UtilityRule, UtilityTrigger};
-pub use weight_update::WeightUpdateMode;
+pub use weight_update::{WeightContribution, WeightUpdateMode};

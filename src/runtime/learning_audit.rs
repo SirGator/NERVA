@@ -51,6 +51,8 @@ pub struct DelayedLearningSummary {
     pub positive_requested_no_change: f64,
     pub negative_requested_no_change: f64,
     pub max_abs_requested: f64,
+    pub positive_blocked: f64,
+    pub negative_blocked: f64,
     pub min_weight: Option<f32>,
     pub max_weight: Option<f32>,
     pub positive_actual: f64,
@@ -106,6 +108,9 @@ impl DelayedLearningSummary {
             self.last_nonzero_signal_us = Some(time.0);
         }
         if let Some(update) = delayed {
+            let blocked = update.unfiltered_delta - update.unrounded_delta;
+            self.positive_blocked += blocked.max(0.);
+            self.negative_blocked += blocked.min(0.);
             self.positive_clipped += update.clipped_delta.max(0.);
             self.negative_clipped += update.clipped_delta.min(0.);
             self.positive_rounding_error += update.rounding_error.max(0.);

@@ -12,6 +12,25 @@ pub enum WeightUpdateMode {
     Accumulated,
 }
 
+/// Diagnostic filter of individual requested contributions before carry and bounds.
+/// Eligibility, chemistry, pair timing and neural dynamics remain unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeightContribution {
+    #[default]
+    All,
+    PotentiatingOnly,
+    DepressingOnly,
+}
+impl WeightContribution {
+    pub fn retain(self, delta: f64) -> f64 {
+        match self {
+            Self::All => delta,
+            Self::PotentiatingOnly => delta.max(0.),
+            Self::DepressingOnly => delta.min(0.),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Publication {
     pub weight: Weight,

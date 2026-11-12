@@ -296,3 +296,11 @@ and success criteria are documented in
 [`NERVA_SLICE_ARCHITECTURE.md`](NERVA_SLICE_ARCHITECTURE.md).
 The currently compiled dependency layers and consolidation decisions are kept
 in [`docs/architecture.md`](docs/architecture.md).
+
+MLD-02 research controls additionally expose `with_learning_signal_gain` and
+`with_contribution_filter(WeightContribution::PotentiatingOnly/DepressingOnly)`.
+Filters retain signed eligibility and act before carry/bounds; diagnostics retain
+both the unfiltered request and blocked mass. Fixed competition pools may be
+captured by `install_checkpoint_competition` only with learning/homeostasis
+frozen. Later topology changes remain invalid. See the
+[preregistered MLD-02 protocol](../NERVA_Modell/research/MLD02.md).

@@ -20,7 +20,7 @@ use super::{
     bounds::{WeightBounds, WeightBoundsError},
     rule::{DelayedLearningUpdate, PlasticityRule},
     traces::{DecayingTrace, decay_value},
-    weight_update::{WeightUpdateMode, publish},
+    weight_update::{WeightContribution, WeightUpdateMode, publish},
 };
 
 /// Optional delayed local learning: signed pair tags are integrated against
@@ -96,6 +96,8 @@ pub struct PairStdp {
     enabled: bool,
     three_factor: Option<ThreeFactorConfig>,
     learning_signal_override: Option<f32>,
+    learning_signal_gain: f32,
+    contribution: WeightContribution,
     weight_update_mode: WeightUpdateMode,
     a_plus: f32,
     a_minus: f32,
@@ -136,6 +138,8 @@ impl PairStdp {
             enabled: config.enabled,
             three_factor: None,
             learning_signal_override: None,
+            learning_signal_gain: 1.,
+            contribution: WeightContribution::All,
             weight_update_mode: WeightUpdateMode::DirectF32,
             a_plus: config.a_plus,
             a_minus: config.a_minus,
@@ -168,6 +172,21 @@ impl PairStdp {
         Ok(self)
     }
 
+    /// Uniform gain of the natural learning signal; other receptor effects stay native.
+    pub fn with_learning_signal_gain(mut self, gain: f32) -> Result<Self, PairStdpError> {
+        if !gain.is_finite() || !(0. ..=1_000_000.).contains(&gain) {
+            return Err(PairStdpError::InvalidLearningSignal);
+        }
+        self.learning_signal_gain = gain;
+        Ok(self)
+    }
+
+    /// Keep only the specified requested contributions, before rounding/carry.
+    pub fn with_contribution_filter(mut self, filter: WeightContribution) -> Self {
+        self.contribution = filter;
+        self
+    }
+
     /// Active delayed-learning parameters, or none on the original baseline.
     pub const fn three_factor_config(&self) -> Option<ThreeFactorConfig> {
         self.three_factor
@@ -188,7 +207,7 @@ impl PairStdp {
         let update = publish(
             synapse.weight,
             synapse.learning_weight_residual,
-            delta,
+            self.contribution.retain(delta),
             self.bounds,
             self.weight_update_mode,
         );
@@ -284,6 +303,7 @@ impl PlasticityRule for PairStdp {
     fn learning_signal(&self, post: &Neuron) -> f32 {
         self.learning_signal_override
             .unwrap_or(post.modulation().learning_signal)
+            * self.learning_signal_gain
     }
 
     fn needs_time_updates(&self) -> bool {
@@ -312,13 +332,14 @@ impl PlasticityRule for PairStdp {
             * 1e-6
             * -fraction.exp_m1();
         let apply_weight = enabled && self.eligible(synapse);
-        let unrounded_delta = if apply_weight {
+        let unfiltered_delta = if apply_weight {
             f64::from(config.learning_rate)
                 * tag_integral_seconds
                 * f64::from(self.learning_signal(post))
         } else {
             0.
         };
+        let unrounded_delta = self.contribution.retain(unfiltered_delta);
         let publication = if apply_weight {
             publish(
                 synapse.weight,
@@ -340,6 +361,7 @@ impl PlasticityRule for PairStdp {
             decayed_tag: (f64::from(synapse.learning_eligibility) * fraction.exp()) as f32,
             tag_integral_seconds,
             unrounded_delta,
+            unfiltered_delta,
             next_weight: publication.weight,
             residual_before: synapse.learning_weight_residual,
             residual_after: publication.residual,

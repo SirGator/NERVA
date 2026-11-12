@@ -546,6 +546,25 @@ impl<R: PlasticityRule> Simulation<R> {
         Ok(self)
     }
 
+    /// Explicit research checkpoint: capture current pools with learning and
+    /// homeostasis frozen. Future topology mutations still fail pool validation.
+    pub fn install_checkpoint_competition(
+        &mut self,
+        population: &[NeuronId],
+    ) -> Result<(), SimulationError> {
+        self.ensure_not_poisoned()?;
+        if self.learning_enabled || self.homeostasis.is_enabled() || self.competition.is_some() {
+            return Err(SimulationError::Competition(CompetitionError(
+                "checkpoint competition requires frozen learning/homeostasis and no existing pools",
+            )));
+        }
+        self.competition = Some(
+            IncomingCompetition::new(&self.network, population)
+                .map_err(SimulationError::Competition)?,
+        );
+        Ok(())
+    }
+
     /// Immutable initial competition pools; empty when the mechanism is absent.
     pub fn competition_pools(&self) -> &[CompetitionPool] {
         self.competition

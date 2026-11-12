@@ -104,3 +104,95 @@ fn replay_boundaries_are_neutral_and_count_against_the_audit_budget() {
     assert_eq!(log.boundaries, vec![SimTime(1000), SimTime(2000)]);
     assert!(!log.is_complete());
 }
+
+#[test]
+fn sign_filter_precedes_carry_and_keeps_signed_eligibility() {
+    use nerva::learning::{WeightContribution, WeightUpdateMode};
+    let mut post = Neuron::new(
+        NeuronId(2),
+        Position3D::ORIGIN,
+        Polarity::Excitatory,
+        None,
+        NeuronConfig::default(),
+        SimTime::ZERO,
+    )
+    .unwrap();
+    post.set_modulation(
+        SimTime::ZERO,
+        ModulationState {
+            learning_signal: 1.,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut edge = Synapse::new(
+        SynapseId(1),
+        NeuronId(1),
+        NeuronId(2),
+        Weight::new(0.5).unwrap(),
+        1,
+        true,
+    )
+    .unwrap();
+    let mut rule = PairStdp::new(&LearningConfig {
+        a_plus: 0.0001,
+        a_minus: 0.00012,
+        ..Default::default()
+    })
+    .with_three_factor(ThreeFactorConfig::default())
+    .unwrap()
+    .with_weight_update_mode(WeightUpdateMode::Accumulated)
+    .with_contribution_filter(WeightContribution::PotentiatingOnly);
+    rule.on_pre_arrival(&mut edge, &post, SimTime(1));
+    rule.on_post_spike(&post, std::slice::from_mut(&mut edge), SimTime(2));
+    rule.advance_time(&mut edge, &post, SimTime(3), true);
+    assert!(edge.learning_weight_residual() > 0.);
+    rule.on_pre_arrival(&mut edge, &post, SimTime(3));
+    assert!(edge.learning_eligibility() < 0.);
+    let before = edge.learning_weight_residual();
+    let update = rule
+        .delayed_update_diagnostics(&edge, &post, SimTime(4), true)
+        .unwrap();
+    assert!(update.unfiltered_delta < 0.);
+    assert_eq!(update.unrounded_delta, 0.);
+    rule.advance_time(&mut edge, &post, SimTime(4), true);
+    assert_eq!(edge.learning_weight_residual(), before);
+    assert_eq!(WeightContribution::DepressingOnly.retain(0.2), 0.);
+    assert_eq!(WeightContribution::DepressingOnly.retain(-0.2), -0.2);
+}
+
+#[test]
+fn natural_signal_gain_preserves_sign_distribution_and_other_cell_state() {
+    let mut post = Neuron::new(
+        NeuronId(2),
+        Position3D::ORIGIN,
+        Polarity::Excitatory,
+        None,
+        NeuronConfig::default(),
+        SimTime::ZERO,
+    )
+    .unwrap();
+    post.set_modulation(
+        SimTime::ZERO,
+        ModulationState {
+            learning_signal: -0.125,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let before = post.clone();
+    let original = PairStdp::new(&LearningConfig::default());
+    let amplified = PairStdp::new(&LearningConfig::default())
+        .with_learning_signal_gain(64.)
+        .unwrap();
+    assert_eq!(
+        amplified.learning_signal(&post),
+        64. * original.learning_signal(&post)
+    );
+    assert_eq!(post, before);
+    assert!(
+        PairStdp::new(&LearningConfig::default())
+            .with_learning_signal_gain(-1.)
+            .is_err()
+    );
+}
