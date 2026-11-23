@@ -968,6 +968,20 @@ impl<R: PlasticityRule> Simulation<R> {
         })
     }
 
+    /// Clears all signed synaptic learning tags at the current runtime
+    /// boundary. Returns the number of tags that were nonzero.
+    pub fn clear_synaptic_learning_eligibility(&mut self) -> Result<usize, SimulationError> {
+        self.ensure_not_poisoned()?;
+        let mut cleared = 0;
+        for synapse in self.network.synapses_mut() {
+            if synapse.learning_eligibility() != 0.0 {
+                cleared += 1;
+            }
+            synapse.clear_learning_eligibility();
+        }
+        Ok(cleared)
+    }
+
     /// Whether a fatal error poisoned this simulation.
     pub fn is_poisoned(&self) -> bool {
         self.poisoned.is_some()

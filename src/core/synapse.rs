@@ -218,6 +218,11 @@ impl Synapse {
         self.learning_eligibility_updated_at
     }
 
+    /// Clears the signed learning tag and preserves its time anchor.
+    pub fn clear_learning_eligibility(&mut self) {
+        self.learning_eligibility = 0.0;
+    }
+
     /// Local release parameters and state, absent on neutral baseline edges.
     pub const fn short_term(&self) -> Option<(ShortTermConfig, ShortTermState)> {
         self.short_term
@@ -741,6 +746,24 @@ mod tests {
             WeightError::NonFinite(value) => SynapseError::NonFiniteWeight(value),
             WeightError::Negative(value) => SynapseError::NegativeWeight(value),
         }
+    }
+
+    #[test]
+    fn clearing_learning_eligibility_preserves_other_synapse_state() {
+        let mut edge = synapse(0.5).expect("valid synapse");
+        edge.learning_eligibility = -0.25;
+        edge.learning_eligibility_updated_at = Some(SimTime(100));
+        edge.pre_trace = 0.75;
+        edge.pre_trace_updated_at = Some(SimTime(90));
+        edge.learning_weight_residual = 1.0e-9;
+        edge.utility_eligibility = 0.5;
+        edge.utility_eligibility_updated_at = Some(SimTime(90));
+        let mut expected = edge.clone();
+        expected.learning_eligibility = 0.0;
+
+        edge.clear_learning_eligibility();
+
+        assert_eq!(edge, expected);
     }
 
     #[test]
