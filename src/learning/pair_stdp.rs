@@ -91,7 +91,7 @@ impl Error for PairStdpError {}
 /// enforce the finite STDP window exactly. Each update pairs a spike with
 /// only the most recent opposite spike inside the window
 /// (nearest-neighbor pairing), rather than summing over all trace partners.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PairStdp {
     enabled: bool,
     three_factor: Option<ThreeFactorConfig>,

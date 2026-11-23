@@ -1212,6 +1212,12 @@ impl<R: PlasticityRule> Simulation<R> {
         self.learning_enabled
     }
 
+    /// Borrows the installed synaptic plasticity rule and its current state.
+    /// The runtime's [`Self::learning_enabled`] flag separately controls hook execution.
+    pub fn plasticity_rule(&self) -> &R {
+        &self.plasticity_rule
+    }
+
     /// Enables or freezes local activity recording and cellular maintenance.
     ///
     /// Enabling starts any missing neuron-local clocks and resets their elapsed
