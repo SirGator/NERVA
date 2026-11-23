@@ -237,7 +237,12 @@ impl DevelopmentPlan {
         });
 
         match result {
-            Ok(()) => Ok(created),
+            Ok(()) => {
+                for pruning in &self.prunings {
+                    simulation.notify_synapse_removed(pruning.synapse_id);
+                }
+                Ok(created)
+            }
             Err(sim_error) => {
                 created.clear();
                 Err(DevelopmentPlanError::Simulation(sim_error))

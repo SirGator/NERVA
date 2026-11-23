@@ -16,8 +16,8 @@ use crate::{
     },
     learning::{
         CompetitionError, CompetitionEvent, CompetitionPool, HomeostasisError, IncomingCompetition,
-        LocalHomeostasis, NoUtility, PlasticityRule, UtilityContext, UtilityDynamicsConfig,
-        UtilityRule, UtilityTrigger,
+        LocalHomeostasis, NoUtility, PairStdp, PairStdpError, PlasticityRule, UtilityContext,
+        UtilityDynamicsConfig, UtilityRule, UtilityTrigger,
     },
     math::{DecayError, try_distance_attenuation},
     neuromodulation::{ChemicalConfig, ChemicalError, ChemicalField, ChemicalSpecies},
@@ -459,6 +459,16 @@ pub struct Simulation<R: PlasticityRule> {
     poisoned: Option<Box<SimulationError>>,
 }
 
+impl Simulation<PairStdp> {
+    /// Configures the installed rule's experimental local rate correction.
+    pub fn configure_pair_rate_correction(
+        &mut self,
+        tau_us: Option<f32>,
+    ) -> Result<(), PairStdpError> {
+        self.plasticity_rule.set_rate_correction(tau_us)
+    }
+}
+
 impl<R: PlasticityRule> Simulation<R> {
     /// Creates a runtime with local homeostasis disabled by default and the
     /// no-op [`NoUtility`] utility rule.
@@ -805,7 +815,7 @@ impl<R: PlasticityRule> Simulation<R> {
     /// supported way to remove a neuron from a live simulation.
     pub fn remove_neuron(&mut self, neuron_id: NeuronId) -> Result<Neuron, SimulationError> {
         self.ensure_not_poisoned()?;
-        self.transaction(|simulation| {
+        let removed = self.transaction(|simulation| {
             // Remove from the authoritative graph first. If this is rejected
             // because a caller has not explicitly disconnected the cell, the
             // transaction restores every existing queue booking unchanged.
@@ -815,7 +825,9 @@ impl<R: PlasticityRule> Simulation<R> {
                 .map_err(SimulationError::InvalidNetwork)?;
             simulation.cancel_neuron_events(neuron_id);
             Ok(removed)
-        })
+        })?;
+        self.plasticity_rule.on_neuron_removed(neuron_id);
+        Ok(removed)
     }
 
     /// Adds one validated synapse to the live network atomically.
@@ -841,14 +853,9 @@ impl<R: PlasticityRule> Simulation<R> {
     /// live pruning boundary used by structural plasticity.
     pub fn remove_synapse(&mut self, synapse_id: SynapseId) -> Result<Synapse, SimulationError> {
         self.ensure_not_poisoned()?;
-        self.transaction(|simulation| {
-            let removed = simulation
-                .network
-                .remove_synapse(synapse_id)
-                .map_err(SimulationError::InvalidNetwork)?;
-            simulation.cancel_synaptic_arrivals(synapse_id);
-            Ok(removed)
-        })
+        let removed = self.transaction(|simulation| simulation.remove_synapse_inner(synapse_id))?;
+        self.notify_synapse_removed(synapse_id);
+        Ok(removed)
     }
 
     /// Applies one mutation to a neuron's local state and refreshes every
@@ -881,9 +888,8 @@ impl<R: PlasticityRule> Simulation<R> {
 
     /// Crate-internal synapse removal without its own transaction.
     ///
-    /// Used by the development plan commit so all mutations share one outer
-    /// transaction. Caller must already hold an outer transaction.
-    #[cfg(feature = "development")]
+    /// Caller must already hold an outer transaction and notify the rule
+    /// after it commits.
     pub(crate) fn remove_synapse_inner(
         &mut self,
         synapse_id: SynapseId,
@@ -894,6 +900,11 @@ impl<R: PlasticityRule> Simulation<R> {
             .map_err(SimulationError::InvalidNetwork)?;
         self.cancel_synaptic_arrivals(synapse_id);
         Ok(removed)
+    }
+
+    /// Notifies the rule after a synapse removal transaction commits.
+    pub(crate) fn notify_synapse_removed(&mut self, synapse_id: SynapseId) {
+        self.plasticity_rule.on_synapse_removed(synapse_id);
     }
 
     /// Crate-internal neuron mutation without its own transaction.

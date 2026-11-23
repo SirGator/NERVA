@@ -69,7 +69,7 @@ pub enum PairStdpError {
     InvalidLearningSignal,
     /// Potentiation and depression amplitudes must be finite and non-negative.
     InvalidLearningAmplitude,
-    /// Both trace time constants must be finite and strictly positive.
+    /// Trace time constants must be finite and strictly positive.
     InvalidTimeConstant,
     /// The finite pair window must contain at least one microsecond.
     EmptyStdpWindow,
@@ -108,6 +108,42 @@ pub struct PairStdp {
     post_traces: HashMap<NeuronId, DecayingTrace>,
     last_pre_spikes: HashMap<SynapseId, SimTime>,
     last_post_spikes: HashMap<NeuronId, SimTime>,
+    rate_correction: Option<RateCorrection>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RateCorrection {
+    tau_us: f32,
+    pre: HashMap<SynapseId, DecayingTrace>,
+    post: HashMap<NeuronId, DecayingTrace>,
+}
+
+impl RateCorrection {
+    fn expectation(
+        &self,
+        trace: Option<&DecayingTrace>,
+        time: SimTime,
+        exclude_coincident: bool,
+        fast_tau_us: f32,
+        window_us: u64,
+    ) -> f32 {
+        let Some((trace, elapsed)) =
+            trace.and_then(|trace| Some((trace, time.duration_since(trace.updated_at())?)))
+        else {
+            return 0.0;
+        };
+        let count = if exclude_coincident && elapsed == 0 {
+            (trace.value() - 1.0).max(0.0)
+        } else {
+            decay_value(trace.value(), elapsed, self.tau_us)
+        };
+
+        // Integrate the product of the exponential timing kernel and the
+        // nearest-event age density of an independent Poisson process.
+        let rate = f64::from(count) / f64::from(self.tau_us);
+        let q = rate + 1.0 / f64::from(fast_tau_us);
+        ((rate / q) * -(-q * window_us as f64).exp_m1()) as f32
+    }
 }
 
 impl PairStdp {
@@ -150,6 +186,7 @@ impl PairStdp {
             post_traces: HashMap::new(),
             last_pre_spikes: HashMap::new(),
             last_post_spikes: HashMap::new(),
+            rate_correction: None,
         })
     }
 
@@ -253,6 +290,26 @@ impl PairStdp {
         self.enabled
     }
 
+    /// Selects experimental correction for the expected nearest-pair update
+    /// under independently firing neurons. The optional time constant controls
+    /// the local spike-rate estimates and is expressed in microseconds.
+    ///
+    /// Changing the setting clears its rate estimates and preserves native
+    /// pair history, eligibility and weights.
+    pub fn set_rate_correction(&mut self, tau_us: Option<f32>) -> Result<(), PairStdpError> {
+        if tau_us.is_some_and(|tau| !valid_tau(tau)) {
+            return Err(PairStdpError::InvalidTimeConstant);
+        }
+        if tau_us != self.rate_correction.as_ref().map(|state| state.tau_us) {
+            self.rate_correction = tau_us.map(|tau_us| RateCorrection {
+                tau_us,
+                pre: HashMap::new(),
+                post: HashMap::new(),
+            });
+        }
+        Ok(())
+    }
+
     /// Returns the stored postsynaptic trace at its most recent update.
     pub fn post_trace(&self, neuron_id: NeuronId) -> Option<&DecayingTrace> {
         self.post_traces.get(&neuron_id)
@@ -266,6 +323,10 @@ impl PairStdp {
         self.post_traces.clear();
         self.last_pre_spikes.clear();
         self.last_post_spikes.clear();
+        if let Some(state) = &mut self.rate_correction {
+            state.pre.clear();
+            state.post.clear();
+        }
     }
 
     fn eligible(&self, synapse: &Synapse) -> bool {
@@ -296,6 +357,19 @@ impl PairStdp {
     fn within_window(&self, later: SimTime, earlier: SimTime) -> Option<u64> {
         let elapsed_us = later.duration_since(earlier)?;
         (elapsed_us <= self.stdp_window_us).then_some(elapsed_us)
+    }
+
+    fn pair_delta(
+        elapsed_us: Option<u64>,
+        amplitude: f32,
+        tau_us: f32,
+        expectation: Option<f32>,
+    ) -> Option<f32> {
+        let kernel = elapsed_us.map(|elapsed| decay_factor(elapsed, tau_us));
+        match expectation {
+            Some(mean) if mean != 0.0 => Some(amplitude * (kernel.unwrap_or(0.0) - mean)),
+            _ => kernel.map(|value| amplitude * value),
+        }
     }
 }
 
@@ -374,6 +448,18 @@ impl PlasticityRule for PairStdp {
         presynaptic_polarity == crate::core::Polarity::Excitatory && self.eligible(synapse)
     }
 
+    fn on_synapse_removed(&mut self, synapse_id: SynapseId) {
+        if let Some(state) = &mut self.rate_correction {
+            state.pre.remove(&synapse_id);
+        }
+    }
+
+    fn on_neuron_removed(&mut self, neuron_id: NeuronId) {
+        if let Some(state) = &mut self.rate_correction {
+            state.post.remove(&neuron_id);
+        }
+    }
+
     fn on_pre_arrival(&mut self, synapse: &mut Synapse, post: &Neuron, time: SimTime) {
         if !self.eligible(synapse) || !self.can_advance_pre_trace(synapse, time) {
             return;
@@ -398,13 +484,23 @@ impl PlasticityRule for PairStdp {
             .advance_to(time, self.tau_minus_us)
             .expect("post-trace time and tau were validated");
 
-        if let Some(elapsed_us) = self
+        let elapsed_us = self
             .last_post_spikes
             .get(&post_id)
             .copied()
-            .and_then(|post_time| self.within_window(time, post_time))
+            .and_then(|post_time| self.within_window(time, post_time));
+        let expectation = self.rate_correction.as_ref().map(|state| {
+            state.expectation(
+                state.post.get(&post_id),
+                time,
+                false,
+                self.tau_minus_us,
+                self.stdp_window_us,
+            )
+        });
+        if let Some(delta) =
+            Self::pair_delta(elapsed_us, -self.a_minus, self.tau_minus_us, expectation)
         {
-            let delta = -self.a_minus * decay_factor(elapsed_us, self.tau_minus_us);
             self.apply_pair_delta(synapse, post, time, delta);
         }
 
@@ -412,6 +508,14 @@ impl PlasticityRule for PairStdp {
         // previous postsynaptic spike.
         synapse.pre_trace += 1.0;
         self.last_pre_spikes.insert(synapse.id, time);
+        if let Some(state) = &mut self.rate_correction {
+            state
+                .pre
+                .entry(synapse.id)
+                .or_insert_with(|| DecayingTrace::new(time))
+                .add_impulse(time, state.tau_us, 1.0)
+                .expect("pre-trace time, tau and impulse were validated");
+        }
     }
 
     fn on_post_spike(&mut self, neuron: &Neuron, incoming: &mut [Synapse], time: SimTime) {
@@ -438,13 +542,25 @@ impl PlasticityRule for PairStdp {
 
             self.advance_pre_trace(synapse, time);
 
-            if let Some(elapsed_us) = self
+            let elapsed_us = self
                 .last_pre_spikes
                 .get(&synapse.id)
                 .copied()
-                .and_then(|pre_time| self.within_window(time, pre_time))
+                .and_then(|pre_time| self.within_window(time, pre_time));
+            let expectation = self.rate_correction.as_ref().map(|state| {
+                // A coincident arrival contributes to the native pair but
+                // its own impulse is excluded from the baseline estimate.
+                state.expectation(
+                    state.pre.get(&synapse.id),
+                    time,
+                    true,
+                    self.tau_plus_us,
+                    self.stdp_window_us,
+                )
+            });
+            if let Some(delta) =
+                Self::pair_delta(elapsed_us, self.a_plus, self.tau_plus_us, expectation)
             {
-                let delta = self.a_plus * decay_factor(elapsed_us, self.tau_plus_us);
                 self.apply_pair_delta(synapse, neuron, time, delta);
             }
         }
@@ -458,6 +574,14 @@ impl PlasticityRule for PairStdp {
                 .add_impulse(time, self.tau_minus_us, 1.0)
                 .expect("post-trace time, tau, and impulse were validated");
             self.last_post_spikes.insert(neuron_id, time);
+            if let Some(state) = &mut self.rate_correction {
+                state
+                    .post
+                    .entry(neuron_id)
+                    .or_insert_with(|| DecayingTrace::new(time))
+                    .add_impulse(time, state.tau_us, 1.0)
+                    .expect("post-trace time, tau and impulse were validated");
+            }
         }
     }
 }
@@ -477,10 +601,11 @@ fn valid_tau(value: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        config::NeuronConfig,
-        core::{NeuronId, Polarity, SynapseId},
+        config::{NeuronConfig, RuntimeConfig},
+        core::{Network, NeuronId, Polarity, SynapseId},
         math::Position3D,
         primitives::Weight,
+        runtime::Simulation,
     };
 
     use super::*;
@@ -576,6 +701,147 @@ mod tests {
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(501));
 
         assert_eq!(synapse.weight(), weight(0.5));
+    }
+
+    #[test]
+    fn isolated_coincidence_has_its_native_update() {
+        let post = neuron(2);
+        let mut baseline = PairStdp::new(&config());
+        let mut corrected = baseline.clone();
+        corrected.set_rate_correction(Some(1_000.0)).unwrap();
+        let mut native_synapse = synapse(10, 0.5);
+        let mut corrected_synapse = native_synapse.clone();
+        for (rule, synapse) in [
+            (&mut baseline, &mut native_synapse),
+            (&mut corrected, &mut corrected_synapse),
+        ] {
+            let time = SimTime(10);
+            rule.on_pre_arrival(synapse, &post, time);
+            rule.on_post_spike(&post, std::slice::from_mut(synapse), time);
+        }
+        assert_eq!(native_synapse, corrected_synapse);
+    }
+
+    #[test]
+    fn runtime_coincident_learning_and_rate_history_replay_exactly() {
+        let setup = || {
+            let mut network = Network::new();
+            network.add_neuron(neuron(1)).unwrap();
+            network.add_neuron(neuron(2)).unwrap();
+            network.add_synapse(synapse(10, 0.5)).unwrap();
+            let mut simulation = Simulation::new(
+                network,
+                PairStdp::new(&config()),
+                RuntimeConfig::default(),
+                1.0,
+            )
+            .unwrap();
+            simulation
+                .configure_pair_rate_correction(Some(1_000.0))
+                .unwrap();
+            simulation
+                .schedule_external_input(SimTime(0), NeuronId(1), 1.0)
+                .unwrap();
+            simulation
+                .schedule_external_input(SimTime(1), NeuronId(2), 0.6)
+                .unwrap();
+            simulation
+                .schedule_external_input(SimTime(600), NeuronId(1), 1.0)
+                .unwrap();
+            simulation
+        };
+        let mut first = setup();
+        let mut replay = setup();
+        for simulation in [&mut first, &mut replay] {
+            simulation.run().unwrap();
+            let weight = simulation
+                .network()
+                .synapse(SynapseId(10))
+                .unwrap()
+                .weight();
+            // The coincident pair adds the full 0.2, then the isolated
+            // arrival adds the background correction from the old post spike.
+            assert!(weight.get() > 0.7 && weight.get() < 0.71);
+        }
+        assert!(first.same_replay_state(&replay));
+    }
+
+    #[test]
+    fn rate_correction_removes_background_even_outside_the_pair_window() {
+        let post = neuron(2);
+        let mut rule = PairStdp::new(&config());
+        rule.set_rate_correction(Some(1_000.0)).unwrap();
+        let mut pre_history = synapse(10, 0.5);
+        let mut post_history = synapse(11, 0.5);
+        rule.on_pre_arrival(&mut pre_history, &post, SimTime(0));
+        rule.on_post_spike(&post, &mut [], SimTime(0));
+        rule.on_post_spike(&post, &mut [], SimTime(0));
+
+        // The duplicate post hook does not count another spike. Neither
+        // event at 600 µs has a nearest partner within the pair window.
+        let rate = (-0.6_f32).exp() / 1_000.0;
+        let mean = |tau: f32| {
+            let q = rate + 1.0 / tau;
+            (rate / q) * (1.0 - (-q * 500.0).exp())
+        };
+        rule.on_pre_arrival(&mut post_history, &post, SimTime(600));
+        rule.on_post_spike(&post, std::slice::from_mut(&mut pre_history), SimTime(600));
+        close(post_history.weight().get(), 0.5 + 0.1 * mean(200.0));
+        close(pre_history.weight().get(), 0.5 - 0.2 * mean(100.0));
+    }
+
+    #[test]
+    fn same_time_arrival_excludes_only_its_own_impulse_from_the_estimate() {
+        let post = neuron(2);
+        let mut rule = PairStdp::new(&config());
+        rule.set_rate_correction(Some(1_000.0)).unwrap();
+        let mut synapse = synapse(10, 0.5);
+        rule.on_pre_arrival(&mut synapse, &post, SimTime(0));
+        rule.on_pre_arrival(&mut synapse, &post, SimTime(100));
+        rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(100));
+        let rate = (-0.1_f32).exp() / 1_000.0;
+        let q = rate + 1.0 / 100.0;
+        let mean = (rate / q) * (1.0 - (-q * 500.0).exp());
+        close(synapse.weight().get(), 0.5 + 0.2 * (1.0 - mean));
+    }
+
+    #[test]
+    fn changing_rate_correction_resets_only_the_slow_history() {
+        let post = neuron(2);
+        let mut rule = PairStdp::new(&config());
+        rule.set_rate_correction(Some(1_000.0)).unwrap();
+        let mut synapse = synapse(10, 0.5);
+        rule.on_pre_arrival(&mut synapse, &post, SimTime(0));
+        let previous = rule.clone();
+        rule.set_rate_correction(Some(1_000.0)).unwrap();
+        assert_eq!(rule, previous);
+        for invalid in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+            assert_eq!(
+                rule.set_rate_correction(Some(invalid)),
+                Err(PairStdpError::InvalidTimeConstant)
+            );
+            assert_eq!(rule, previous);
+        }
+        rule.set_rate_correction(Some(2_000.0)).unwrap();
+        rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(50));
+        close(synapse.weight().get(), 0.5 + 0.2 * (-0.5_f32).exp());
+        rule.clear_rule_state();
+        let state = rule.rate_correction.as_ref().unwrap();
+        assert!(state.pre.is_empty() && state.post.is_empty());
+    }
+
+    #[test]
+    fn removals_clear_local_rate_history() {
+        let post = neuron(2);
+        let mut rule = PairStdp::new(&config());
+        rule.set_rate_correction(Some(1_000.0)).unwrap();
+        let mut synapse = synapse(10, 0.5);
+        rule.on_pre_arrival(&mut synapse, &post, SimTime(0));
+        rule.on_post_spike(&post, &mut [], SimTime(0));
+        rule.on_synapse_removed(synapse.id());
+        rule.on_neuron_removed(post.id());
+        let state = rule.rate_correction.as_ref().unwrap();
+        assert!(state.pre.is_empty() && state.post.is_empty());
     }
 
     #[test]

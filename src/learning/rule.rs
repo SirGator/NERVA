@@ -1,6 +1,6 @@
 //! Runtime-facing boundary for local plasticity.
 
-use crate::core::{Neuron, Polarity, SimTime, Synapse};
+use crate::core::{Neuron, NeuronId, Polarity, SimTime, Synapse, SynapseId};
 use crate::primitives::Weight;
 
 /// Read-only prediction of one delayed local update, before f32 rounding/bounds.
@@ -76,6 +76,12 @@ pub trait PlasticityRule {
 
     /// Handles a postsynaptic spike for the neuron's incoming synapses.
     fn on_post_spike(&mut self, neuron: &Neuron, incoming: &mut [Synapse], time: SimTime);
+
+    /// Drops local state after the runtime commits removal of a synapse.
+    fn on_synapse_removed(&mut self, _synapse_id: SynapseId) {}
+
+    /// Drops local state after the runtime commits removal of an isolated neuron.
+    fn on_neuron_removed(&mut self, _neuron_id: NeuronId) {}
 }
 
 /// A rule that deliberately leaves all local state unchanged.
