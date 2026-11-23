@@ -20,6 +20,11 @@ use super::{DenseNeuronBatch, FlatNeuronInputs};
 /// CpuCompute preserves the original CPU arithmetic exactly. Future backends
 /// must declare numerical tolerances and replay guarantees explicitly.
 pub trait ComputeBackend {
+    /// Independent exact diagnostic copy; unsupported backends return `None`.
+    fn diagnostic_fork(&self) -> Option<Box<dyn ComputeBackend>> {
+        None
+    }
+
     /// Analytically advances all exported cells to the shared timestamp.
     fn advance_neurons(
         &mut self,

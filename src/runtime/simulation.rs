@@ -470,6 +470,50 @@ impl Simulation<PairStdp> {
 }
 
 impl<R: PlasticityRule> Simulation<R> {
+    /// Create an independent exact copy, including scheduler, random streams and diagnostics.
+    /// Rejects opaque runtime implementations that do not support exact forks.
+    pub fn diagnostic_fork(&self) -> Result<Self, &'static str>
+    where
+        R: Clone,
+    {
+        if self.poisoned.is_some() {
+            return Err("cannot fork a poisoned simulation");
+        }
+        let compute = self
+            .compute
+            .diagnostic_fork()
+            .ok_or("compute backend does not support exact diagnostic forks")?;
+        let utility_rule = self
+            .utility_rule
+            .diagnostic_fork()
+            .ok_or("utility rule does not support exact diagnostic forks")?;
+        Ok(Self {
+            network: self.network.clone(),
+            chemical_field: self.chemical_field.clone(),
+            learning_audit: self.learning_audit.clone(),
+            dynamics_auditing: self.dynamics_auditing,
+            chemical_booking: self.chemical_booking,
+            compute,
+            profile: self.profile.clone(),
+            plasticity_rule: self.plasticity_rule.clone(),
+            competition: self.competition.clone(),
+            competition_events: self.competition_events.clone(),
+            competition_auditing: self.competition_auditing,
+            utility_rule,
+            homeostasis: self.homeostasis.clone(),
+            homeostasis_population: self.homeostasis_population.clone(),
+            scheduler: self.scheduler.clone(),
+            homeostasis_bookings: self.homeostasis_bookings.clone(),
+            intrinsic_bookings: self.intrinsic_bookings.clone(),
+            event_log: self.event_log.clone(),
+            max_events_per_batch: self.max_events_per_batch,
+            distance_decay_length: self.distance_decay_length,
+            learning_enabled: self.learning_enabled,
+            utility_dynamics: self.utility_dynamics,
+            poisoned: None,
+        })
+    }
+
     /// Creates a runtime with local homeostasis disabled by default and the
     /// no-op [`NoUtility`] utility rule.
     pub fn new(

@@ -38,6 +38,47 @@ fn one_neuron_network() -> Network {
 }
 
 #[test]
+fn diagnostic_fork_rejects_unsupported_opaque_implementations_and_poisoning() {
+    struct UnsupportedUtility;
+    impl crate::learning::UtilityRule for UnsupportedUtility {
+        fn supports(&self, _: Polarity) -> bool {
+            false
+        }
+        fn evidence(&self, _: &crate::learning::UtilityContext<'_>) -> Option<f32> {
+            None
+        }
+    }
+    struct UnsupportedCompute;
+    impl crate::compute::ComputeBackend for UnsupportedCompute {
+        fn advance_neurons(
+            &mut self,
+            _: &mut crate::compute::DenseNeuronBatch,
+            _: SimTime,
+        ) -> Result<(), crate::compute::ComputeError> {
+            unreachable!()
+        }
+        fn integrate_neurons(
+            &mut self,
+            _: &mut crate::compute::DenseNeuronBatch,
+            _: &mut crate::compute::FlatNeuronInputs,
+            _: SimTime,
+        ) -> Result<Vec<crate::core::Spike>, crate::compute::ComputeError> {
+            unreachable!()
+        }
+    }
+    let mut runtime = simulation(one_neuron_network(), NoPlasticity);
+    assert!(runtime.diagnostic_fork().is_ok());
+    runtime.utility_rule = Box::new(UnsupportedUtility);
+    assert!(runtime.diagnostic_fork().is_err());
+    runtime.utility_rule = Box::new(crate::learning::NoUtility);
+    runtime.compute = Box::new(UnsupportedCompute);
+    assert!(runtime.diagnostic_fork().is_err());
+    runtime.compute = Box::new(crate::compute::CpuCompute);
+    runtime.poisoned = Some(Box::new(SimulationError::UnknownNeuron(NeuronId(99))));
+    assert!(runtime.diagnostic_fork().is_err());
+}
+
+#[test]
 fn electrical_audit_observes_cancellation_reset_leak_and_refractory_without_changing_replay() {
     fn setup(audit: bool) -> Simulation<crate::learning::PairStdp> {
         let mut params = neuron_params();

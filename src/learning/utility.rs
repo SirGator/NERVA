@@ -170,6 +170,11 @@ pub struct UtilityContext<'a> {
 /// context. There is deliberately no access to the global network, so a
 /// utility rule cannot base its judgement on population statistics.
 pub trait UtilityRule {
+    /// Independent exact diagnostic copy; unsupported rules return `None`.
+    fn diagnostic_fork(&self) -> Option<Box<dyn UtilityRule>> {
+        None
+    }
+
     /// Whether this rule can produce utility evidence for a synapse whose
     /// presynaptic neuron has the given `polarity`.
     ///
@@ -196,6 +201,10 @@ pub trait UtilityRule {
 pub struct NoUtility;
 
 impl UtilityRule for NoUtility {
+    fn diagnostic_fork(&self) -> Option<Box<dyn UtilityRule>> {
+        Some(Box::new(*self))
+    }
+
     fn supports(&self, _polarity: Polarity) -> bool {
         false
     }

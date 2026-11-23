@@ -60,6 +60,10 @@ impl ExcitatoryCausalUtility {
 }
 
 impl UtilityRule for ExcitatoryCausalUtility {
+    fn diagnostic_fork(&self) -> Option<Box<dyn UtilityRule>> {
+        Some(Box::new(*self))
+    }
+
     fn supports(&self, polarity: Polarity) -> bool {
         polarity == Polarity::Excitatory
     }

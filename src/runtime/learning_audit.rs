@@ -171,6 +171,7 @@ impl fmt::Display for LearningAuditError {
 }
 impl Error for LearningAuditError {}
 
+#[derive(Clone)]
 pub(super) struct LearningAudit {
     limit: usize,
     pub record_boundaries: bool,

@@ -9,6 +9,10 @@ use super::{ComputeBackend, ComputeError, DenseNeuronBatch, FlatNeuronInputs};
 pub struct CpuCompute;
 
 impl ComputeBackend for CpuCompute {
+    fn diagnostic_fork(&self) -> Option<Box<dyn ComputeBackend>> {
+        Some(Box::new(*self))
+    }
+
     fn advance_neurons(
         &mut self,
         neurons: &mut DenseNeuronBatch,
