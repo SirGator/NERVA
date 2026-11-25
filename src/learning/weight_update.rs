@@ -53,12 +53,18 @@ pub(crate) fn publish(
         WeightUpdateMode::DirectF32 => {
             let cast = delta.clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32;
             let next = bounds.apply_delta(weight, cast);
+            let actual = f64::from(next.get()) - old;
+            // The part of the step that the bounds reject.
             let clipped = delta - delta.clamp(low, high);
+            // Everything else that did not reach the weight: the rounding of the
+            // f32 publication and the damping of the soft landing. It is
+            // rejected and never retained as hidden debt.
+            let rounding = delta - actual - clipped;
             Publication {
                 weight: next,
                 residual,
                 clipped_delta: clipped,
-                rounding_error: delta - (f64::from(next.get()) - old) - clipped,
+                rounding_error: rounding,
             }
         }
         WeightUpdateMode::Accumulated => {
@@ -66,12 +72,12 @@ pub(crate) fn publish(
             // the visible weight still survive in the independent carry.
             let pending = residual + delta;
             let allowed = pending.clamp(low, high);
-            // Reapply typed bounds after publication: a very wide subtraction
-            // can lose a small positive lower bound even in f64.
-            let next = bounds.clamp(
-                Weight::new((old + allowed) as f32).expect("validated finite weight bounds"),
-            );
+            // Publish with the soft landing: the weight approaches the bound
+            // continuously instead of jumping onto it.
+            let next = bounds.soft_update(weight, allowed as f32);
             let actual = f64::from(next.get()) - old;
+            // The part of the allowed step that the soft landing damped stays
+            // in the carry and is offered again with the next publication.
             let carry = allowed - actual;
             Publication {
                 weight: next,
@@ -87,7 +93,7 @@ pub(crate) fn publish(
 mod tests {
     use super::*;
     #[test]
-    fn wide_dynamic_ranges_still_obey_the_exact_f32_lower_bound() {
+    fn wide_dynamic_ranges_stay_inside_the_f32_bounds() {
         let bounds = WeightBounds::new(0.2, f32::MAX).unwrap();
         let result = publish(
             Weight::new(f32::MAX).unwrap(),
@@ -96,7 +102,9 @@ mod tests {
             bounds,
             WeightUpdateMode::Accumulated,
         );
-        assert_eq!(result.weight, bounds.min());
+        // The soft landing approaches the lower bound; it never leaves it.
+        assert!(result.weight.get() >= bounds.min().get());
+        assert!(result.weight.get().is_finite());
         assert!(result.residual.is_finite());
     }
     #[test]

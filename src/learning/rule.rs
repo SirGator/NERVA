@@ -19,7 +19,8 @@ pub struct DelayedLearningUpdate {
     pub residual_after: f64,
     /// Signed mass rejected by weight bounds; never retained as hidden debt.
     pub clipped_delta: f64,
-    /// Signed difference after accounting for actual, residual and clipped mass.
+    /// Signed mass that did not reach the published weight: the rounding of the
+    /// f32 publication and, without a carry, the damping of the soft landing.
     pub rounding_error: f64,
 }
 
