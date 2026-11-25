@@ -389,10 +389,13 @@ impl PairStdp {
         }
         let window = self.stdp_window_us as f32;
         let elapsed = elapsed_us as f32;
-        if elapsed <= window * (1.0 - WINDOW_TAPER_FRACTION) {
+        let taper = window * WINDOW_TAPER_FRACTION;
+        if elapsed <= window - taper {
             return 1.0;
         }
-        let remaining = 1.0 - elapsed / window;
+        // The taper reaches one at its start and zero at the window edge, so
+        // the mask stays continuous across both boundaries.
+        let remaining = (window - elapsed) / taper;
         remaining * remaining
     }
 
@@ -760,6 +763,25 @@ mod tests {
 
         let expected = soft_weight(0.5, -0.1 * (-0.25_f32).exp(), 0.2, 0.8);
         close(synapse.weight().get(), expected);
+    }
+
+    #[test]
+    fn the_window_mask_is_continuous_across_its_boundaries() {
+        let rule = PairStdp::new(&config());
+        let window = 500u64;
+        let taper_start = (window as f32 * (1.0 - WINDOW_TAPER_FRACTION)) as u64;
+
+        // The mask is one in the interior and leaves it continuously.
+        assert_eq!(rule.window_mask(0), 1.0);
+        assert_eq!(rule.window_mask(taper_start), 1.0);
+        let after_taper = rule.window_mask(taper_start + 1);
+        assert!(after_taper < 1.0 && after_taper > 0.95);
+
+        // It reaches zero at the window edge and stays zero beyond it.
+        let before_edge = rule.window_mask(window - 1);
+        assert!(before_edge < 0.01);
+        assert_eq!(rule.window_mask(window), 0.0);
+        assert_eq!(rule.window_mask(window + 100), 0.0);
     }
 
     #[test]
