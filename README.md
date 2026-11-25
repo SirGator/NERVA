@@ -12,7 +12,7 @@ simulation tick, backpropagation, global loss, or reward signal.
 
 Commands in this README run from `main/NERVA/`, next to this package's
 `Cargo.toml`. For the complete project, see the [project overview](../README.md),
-[setup guide](../Doku/EINSTIEG.md), and [development workflow](../Doku/ENTWICKLUNG.md).
+[setup guide](../docs/Doku/EINSTIEG.md), and [development workflow](../docs/Doku/ENTWICKLUNG.md).
 
 Add a local dependency to your application's `Cargo.toml`, adjusting `path` to
 the directory containing NERVA's `Cargo.toml`:

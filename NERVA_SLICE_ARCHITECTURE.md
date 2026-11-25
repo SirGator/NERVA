@@ -374,6 +374,16 @@ Kam der Post-Spike zuerst und der Prä-Spike danach, erfolgt LTD:
 
 Danach wird das Gewicht in seinem erlaubten Bereich begrenzt.
 
+Das Paarfenster ist stetig: die Maske ist `1` im Inneren des Fensters, fällt am Rand
+quadratisch gegen `0` und ist außerhalb `0`. Die Aktualisierung ist dadurch als
+Funktion der Zeitdifferenz stetig; ein Paar knapp innerhalb des Fensters löst keinen
+Sprung mehr aus.
+
+Die Gewichtsänderung landet **weich** an den Grenzen: statt den Schritt hart
+abzuschneiden, wird er mit `room·(1-e^{-|δ|/room})` gedämpft, wobei `room` der
+verbleibende Abstand zur Grenze ist. Zwei verschiedene Lerndrücke bleiben damit
+unterscheidbar, und eine Grenze wird nur asymptotisch erreicht.
+
 Für M0 gilt:
 
 - Pair-STDP wirkt zunächst nur auf plastische, intern exzitatorische Synapsen.
@@ -388,6 +398,11 @@ Jedes Neuron führt langsam zerfallende, ausschließlich lokale Schätzungen sei
 - bei ausreichendem Input und zu wenig Output steigt der intrinsische Strom;
 - bei zu wenig Input und zu wenig Output steigt ein lokaler `structural_drive` als Signal für einen späteren Growth-/Pruning-Slice;
 - bei zu hoher Aktivität sinkt der intrinsische Strom, bei hoher Aktivität trotz fehlendem Input besonders stark.
+
+Der Übergang am Feuerratenziel ist geglättet: die Abschwächung wächst stetig mit dem
+Feuerüberschuss (`transition_width`), statt beim Überschreiten des Ziels sprunghaft
+einzusetzen. Der Schalter am Eingangsziel bleibt bewusst hart, weil „Eingang reicht" und
+„Eingang fehlt" zwei verschiedene Diagnosen sind.
 
 Der intrinsische Strom ist eine zeitkontinuierliche Größe (Potential pro Sekunde), keine Addition pro Runtime-Update. Er verschiebt das LIF-Gleichgewicht analytisch über die tatsächlich verstrichene Simulationszeit. Dadurch hat dieselbe Konfiguration bei zwei oder zweihundert Zwischenereignissen denselben Effekt.
 

@@ -325,6 +325,26 @@ Post-Traces erzwingen die Fensterzugehörigkeit exakt, bestimmen die
 Gewichtsänderung aber nicht all-to-all über die gesamte Historie. Eine
 all-to-all-Trace-Formulierung ist eine bewusst offene Erweiterung.
 
+Das Paarfenster ist stetig: die Maske ist `1` im Inneren des Fensters,
+fällt am Rand quadratisch gegen `0` und ist außerhalb `0`. Die
+Aktualisierung ist dadurch als Funktion der Zeitdifferenz stetig.
+
+Die Ratenkorrektur (experimentell, `configure_pair_rate_correction`) zieht
+den *bedingten* Erwartungswert des zeitlichen Kerns ab: bedingt auf das
+Ereignis „Partner im Fenster gefunden". Die unbedingte Form ließe einen
+positiven Restdrift `A·K·e^{-λW}` stehen und wäre nicht erwartungstreu.
+
+Die Gewichtsänderung landet weich an den Grenzen (`WeightBounds::soft_update`):
+der Schritt wird mit `room·(1-e^{-|δ|/room})` gedämpft, statt hart
+abgeschnitten zu werden. Zwei verschiedene Lerndrücke bleiben damit
+unterscheidbar, und eine Grenze wird nur asymptotisch erreicht.
+
+Die synaptische Konkurrenz (`learning::IncomingCompetition`) verteilt ein
+eingefrorenes Budget auf die eingehenden exzitatorischen Gewichte. Das
+verteilte Budget ist auf die Kapazität der positiven Gewichte begrenzt
+(`effective_budget`); ein Überschuss wird nicht auf Gewichte von `0`
+verteilt, damit stillgelegte Synapsen stillgelegt bleiben.
+
 ## Einordnung des M0-Ergebnisses
 
 M0 ist ein Engineering-Kriterium: Es zeigt, dass der konkrete Aufbau unter
