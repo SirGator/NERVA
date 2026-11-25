@@ -23,6 +23,12 @@ use super::{
     weight_update::{WeightContribution, WeightUpdateMode, publish},
 };
 
+/// Share of the pair window in which the kernel is tapered towards zero.
+///
+/// The taper only softens the window edge; inside the remaining window the
+/// exponential kernel is unchanged.
+const WINDOW_TAPER_FRACTION: f32 = 1.0 / 16.0;
+
 /// Optional delayed local learning: signed pair tags are integrated against
 /// the postsynaptic receptor signal rather than immediately changing weights.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -142,7 +148,17 @@ impl RateCorrection {
         // nearest-event age density of an independent Poisson process.
         let rate = f64::from(count) / f64::from(self.tau_us);
         let q = rate + 1.0 / f64::from(fast_tau_us);
-        ((rate / q) * -(-q * window_us as f64).exp_m1()) as f32
+        // Unconditional expectation of the kernel over the window.
+        let unconditional = (rate / q) * -(-q * window_us as f64).exp_m1();
+        // A pair exists only when the nearest partner falls into the window.
+        // The correction therefore uses the conditional expectation; the
+        // unconditional one leaves a positive drift of `A * K * e^{-rate * W}`.
+        let partner_probability = -(-rate * window_us as f64).exp_m1();
+        if partner_probability > f64::EPSILON {
+            (unconditional / partner_probability).min(1.0) as f32
+        } else {
+            unconditional as f32
+        }
     }
 }
 
@@ -359,13 +375,36 @@ impl PairStdp {
         (elapsed_us <= self.stdp_window_us).then_some(elapsed_us)
     }
 
+    /// Continuous mask of the pair window.
+    ///
+    /// The mask is `1` in the interior of the window, falls quadratically to
+    /// `0` at the window edge and stays `0` beyond it. The update is therefore
+    /// continuous in the time difference: a pair just inside the window no
+    /// longer jumps to a finite value while a pair just outside gives zero.
+    /// The mask never exceeds one, so the update is never stronger than with
+    /// the former hard window.
+    fn window_mask(&self, elapsed_us: u64) -> f32 {
+        if self.stdp_window_us == 0 || elapsed_us >= self.stdp_window_us {
+            return 0.0;
+        }
+        let window = self.stdp_window_us as f32;
+        let elapsed = elapsed_us as f32;
+        if elapsed <= window * (1.0 - WINDOW_TAPER_FRACTION) {
+            return 1.0;
+        }
+        let remaining = 1.0 - elapsed / window;
+        remaining * remaining
+    }
+
     fn pair_delta(
+        &self,
         elapsed_us: Option<u64>,
         amplitude: f32,
         tau_us: f32,
         expectation: Option<f32>,
     ) -> Option<f32> {
-        let kernel = elapsed_us.map(|elapsed| decay_factor(elapsed, tau_us));
+        let kernel =
+            elapsed_us.map(|elapsed| self.window_mask(elapsed) * decay_factor(elapsed, tau_us));
         match expectation {
             Some(mean) if mean != 0.0 => Some(amplitude * (kernel.unwrap_or(0.0) - mean)),
             _ => kernel.map(|value| amplitude * value),
@@ -499,7 +538,7 @@ impl PlasticityRule for PairStdp {
             )
         });
         if let Some(delta) =
-            Self::pair_delta(elapsed_us, -self.a_minus, self.tau_minus_us, expectation)
+            self.pair_delta(elapsed_us, -self.a_minus, self.tau_minus_us, expectation)
         {
             self.apply_pair_delta(synapse, post, time, delta);
         }
@@ -559,7 +598,7 @@ impl PlasticityRule for PairStdp {
                 )
             });
             if let Some(delta) =
-                Self::pair_delta(elapsed_us, self.a_plus, self.tau_plus_us, expectation)
+                self.pair_delta(elapsed_us, self.a_plus, self.tau_plus_us, expectation)
             {
                 self.apply_pair_delta(synapse, neuron, time, delta);
             }
@@ -664,6 +703,38 @@ mod tests {
         assert!((left - right).abs() <= 1.0e-6, "{left} != {right}");
     }
 
+    /// The weight after a learning step, as the soft landing realises it.
+    fn soft_weight(weight: f32, delta: f32, min: f32, max: f32) -> f32 {
+        let room = if delta >= 0.0 {
+            max - weight
+        } else {
+            weight - min
+        };
+        if room <= 0.0 {
+            return if delta >= 0.0 { max } else { min };
+        }
+        let step = room * -(-(delta.abs() / room)).exp_m1();
+        if delta >= 0.0 {
+            weight + step
+        } else {
+            weight - step
+        }
+    }
+
+    /// The rate correction as the rule computes it: the conditional expectation
+    /// of the kernel over the pair window.
+    fn corrected_mean(rate: f32, tau_us: f32, window_us: f32) -> f32 {
+        let rate = f64::from(rate);
+        let q = rate + 1.0 / f64::from(tau_us);
+        let unconditional = (rate / q) * (1.0 - (-q * f64::from(window_us)).exp());
+        let partner_probability = 1.0 - (-rate * f64::from(window_us)).exp();
+        if partner_probability > f64::EPSILON {
+            (unconditional / partner_probability).min(1.0) as f32
+        } else {
+            unconditional as f32
+        }
+    }
+
     #[test]
     fn causal_pair_potentiates_by_exact_time_difference() {
         let mut rule = PairStdp::new(&config());
@@ -673,7 +744,7 @@ mod tests {
         rule.on_pre_arrival(&mut synapse, &post, SimTime(100));
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(150));
 
-        let expected = 0.5 + 0.2 * (-0.5_f32).exp();
+        let expected = soft_weight(0.5, 0.2 * (-0.5_f32).exp(), 0.2, 0.8);
         close(synapse.weight().get(), expected);
         close(synapse.pre_trace(), (-0.5_f32).exp());
     }
@@ -687,7 +758,7 @@ mod tests {
         rule.on_post_spike(&post, &mut [], SimTime(100));
         rule.on_pre_arrival(&mut synapse, &post, SimTime(150));
 
-        let expected = 0.5 - 0.1 * (-0.25_f32).exp();
+        let expected = soft_weight(0.5, -0.1 * (-0.25_f32).exp(), 0.2, 0.8);
         close(synapse.weight().get(), expected);
     }
 
@@ -759,9 +830,10 @@ mod tests {
                 .synapse(SynapseId(10))
                 .unwrap()
                 .weight();
-            // The coincident pair adds the full 0.2, then the isolated
+            // The coincident pair adds a potentiating step, then the isolated
             // arrival adds the background correction from the old post spike.
-            assert!(weight.get() > 0.7 && weight.get() < 0.71);
+            // The step is damped softly, so the weight stays below the bound.
+            assert!(weight.get() > 0.6 && weight.get() < 0.71);
         }
         assert!(first.same_replay_state(&replay));
     }
@@ -780,14 +852,17 @@ mod tests {
         // The duplicate post hook does not count another spike. Neither
         // event at 600 µs has a nearest partner within the pair window.
         let rate = (-0.6_f32).exp() / 1_000.0;
-        let mean = |tau: f32| {
-            let q = rate + 1.0 / tau;
-            (rate / q) * (1.0 - (-q * 500.0).exp())
-        };
+        let mean = |tau: f32| corrected_mean(rate, tau, 500.0);
         rule.on_pre_arrival(&mut post_history, &post, SimTime(600));
         rule.on_post_spike(&post, std::slice::from_mut(&mut pre_history), SimTime(600));
-        close(post_history.weight().get(), 0.5 + 0.1 * mean(200.0));
-        close(pre_history.weight().get(), 0.5 - 0.2 * mean(100.0));
+        close(
+            post_history.weight().get(),
+            soft_weight(0.5, 0.1 * mean(200.0), 0.2, 0.8),
+        );
+        close(
+            pre_history.weight().get(),
+            soft_weight(0.5, -0.2 * mean(100.0), 0.2, 0.8),
+        );
     }
 
     #[test]
@@ -800,9 +875,11 @@ mod tests {
         rule.on_pre_arrival(&mut synapse, &post, SimTime(100));
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(100));
         let rate = (-0.1_f32).exp() / 1_000.0;
-        let q = rate + 1.0 / 100.0;
-        let mean = (rate / q) * (1.0 - (-q * 500.0).exp());
-        close(synapse.weight().get(), 0.5 + 0.2 * (1.0 - mean));
+        let mean = corrected_mean(rate, 100.0, 500.0);
+        close(
+            synapse.weight().get(),
+            soft_weight(0.5, 0.2 * (1.0 - mean), 0.2, 0.8),
+        );
     }
 
     #[test]
@@ -824,7 +901,10 @@ mod tests {
         }
         rule.set_rate_correction(Some(2_000.0)).unwrap();
         rule.on_post_spike(&post, std::slice::from_mut(&mut synapse), SimTime(50));
-        close(synapse.weight().get(), 0.5 + 0.2 * (-0.5_f32).exp());
+        close(
+            synapse.weight().get(),
+            soft_weight(0.5, 0.2 * (-0.5_f32).exp(), 0.2, 0.8),
+        );
         rule.clear_rule_state();
         let state = rule.rate_correction.as_ref().unwrap();
         assert!(state.pre.is_empty() && state.post.is_empty());
@@ -845,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn weight_updates_are_clamped_to_magnitude_bounds() {
+    fn weight_updates_approach_the_magnitude_bounds_without_leaving_them() {
         let mut strong_config = config();
         strong_config.a_plus = 10.0;
         strong_config.a_minus = 10.0;
@@ -855,13 +935,15 @@ mod tests {
         let mut ltp = PairStdp::new(&strong_config);
         ltp.on_pre_arrival(&mut potentiated, &post, SimTime(0));
         ltp.on_post_spike(&post, std::slice::from_mut(&mut potentiated), SimTime(1));
-        assert_eq!(potentiated.weight(), weight(strong_config.max_weight));
+        assert!(potentiated.weight().get() > 0.5);
+        assert!(potentiated.weight().get() <= strong_config.max_weight);
 
         let mut depressed = synapse(11, 0.5);
         let mut ltd = PairStdp::new(&strong_config);
         ltd.on_post_spike(&post, &mut [], SimTime(0));
         ltd.on_pre_arrival(&mut depressed, &post, SimTime(1));
-        assert_eq!(depressed.weight(), weight(strong_config.min_weight));
+        assert!(depressed.weight().get() < 0.5);
+        assert!(depressed.weight().get() >= strong_config.min_weight);
     }
 
     #[test]
