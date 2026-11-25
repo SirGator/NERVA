@@ -136,7 +136,8 @@ impl IncomingCompetition {
                 .map(|id| network.synapse(*id).unwrap().weight().get())
                 .collect();
             let after = project(&before, pool.budget)?;
-            let residual = after.iter().map(|w| f64::from(*w)).sum::<f64>() - pool.budget;
+            let residual = after.iter().map(|w| f64::from(*w)).sum::<f64>()
+                - effective_budget(pool.budget, &before);
             for (&id, &weight) in pool.synapses.iter().zip(&after) {
                 network
                     .synapse_mut(id)
@@ -181,6 +182,16 @@ fn valid_weight(value: f32) -> Result<(), CompetitionError> {
         Err(CompetitionError("competition weight outside finite 0..=2"))
     }
 }
+/// Budget that the pool actually distributes.
+///
+/// The incoming budget never exceeds the capacity of the positive weights
+/// (`2` per positive weight). A surplus is therefore not shared with silenced
+/// synapses: a weight of `0` stays `0` instead of being revived.
+fn effective_budget(budget: f64, weights: &[f32]) -> f64 {
+    let positive = weights.iter().filter(|w| **w > 0.0).count();
+    budget.min(2.0 * positive as f64)
+}
+
 fn project(weights: &[f32], budget: f64) -> Result<Vec<f32>, CompetitionError> {
     for &w in weights {
         valid_weight(w)?;
@@ -191,16 +202,12 @@ fn project(weights: &[f32], budget: f64) -> Result<Vec<f32>, CompetitionError> {
     if weights.is_empty() {
         return Ok(Vec::new());
     }
-    let positive = weights.iter().filter(|w| **w > 0.0).count();
     let mut result = vec![0.0_f64; weights.len()];
-    if budget > 2.0 * positive as f64 {
-        let share = (budget - 2.0 * positive as f64) / (weights.len() - positive) as f64;
-        for (out, &w) in result.iter_mut().zip(weights) {
-            *out = if w > 0.0 { 2.0 } else { share };
-        }
-    } else {
+    {
+        // The budget is capped at the capacity of the positive weights. This
+        // keeps the projection feasible and leaves zero weights untouched.
         let mut active: Vec<_> = (0..weights.len()).filter(|i| weights[*i] > 0.0).collect();
-        let mut remaining = budget;
+        let mut remaining = effective_budget(budget, weights);
         while !active.is_empty() {
             let sum: f64 = active.iter().map(|i| f64::from(weights[*i])).sum();
             let scale = remaining / sum;
@@ -223,7 +230,10 @@ fn project(weights: &[f32], budget: f64) -> Result<Vec<f32>, CompetitionError> {
         }
     }
     let mut rounded: Vec<f32> = result.iter().map(|w| *w as f32).collect();
-    let mut residual = budget - rounded.iter().map(|w| f64::from(*w)).sum::<f64>();
+    // The rounding correction refers to the budget that was actually
+    // distributed, not to the incoming budget.
+    let distributed = effective_budget(budget, weights);
+    let mut residual = distributed - rounded.iter().map(|w| f64::from(*w)).sum::<f64>();
     for (i, value) in rounded.iter_mut().enumerate() {
         // Do not revive a zero outside the explicitly specified fallback.
         if result[i] == 0.0 {
@@ -233,7 +243,7 @@ fn project(weights: &[f32], budget: f64) -> Result<Vec<f32>, CompetitionError> {
         residual -= f64::from(corrected) - f64::from(*value);
         *value = corrected;
     }
-    if residual.abs() > 1e-6 + 1e-6 * budget {
+    if residual.abs() > 1e-6 + 1e-6 * distributed {
         return Err(CompetitionError(
             "competition budget residual exceeds tolerance",
         ));
@@ -248,12 +258,9 @@ fn project(weights: &[f32], budget: f64) -> Result<Vec<f32>, CompetitionError> {
 mod tests {
     use super::*;
     #[test]
-    fn proportional_saturation_zero_revival_and_invalid_budgets() {
+    fn proportional_saturation_keeps_zero_weights_and_rejects_invalid_budgets() {
         assert_eq!(project(&[0.2, 0.4], 1.5).unwrap(), vec![0.5, 1.0]);
         assert_eq!(project(&[2.0, 0.1, 0.1], 4.0).unwrap(), vec![2.0, 1.0, 1.0]);
-        assert_eq!(project(&[1.0, 0.0, 0.0], 3.0).unwrap(), vec![2.0, 0.5, 0.5]);
-        assert_eq!(project(&[0.0, 0.0], 1.5).unwrap(), vec![0.75, 0.75]);
-        assert_eq!(project(&[1.0, 0.0], 1.5).unwrap(), vec![1.5, 0.0]);
         assert_eq!(project(&[], 0.0).unwrap(), Vec::<f32>::new());
         for (w, b) in [
             (vec![0.5], 2.1),
@@ -264,6 +271,24 @@ mod tests {
             assert!(project(&w, b).is_err());
         }
     }
+
+    #[test]
+    fn a_surplus_budget_does_not_revive_silenced_synapses() {
+        // The budget exceeds the capacity of the positive weights. It is capped
+        // instead of being shared with the weights of zero.
+        assert_eq!(project(&[1.0, 0.0, 0.0], 3.0).unwrap(), vec![2.0, 0.0, 0.0]);
+        assert_eq!(project(&[0.0, 0.0], 1.5).unwrap(), vec![0.0, 0.0]);
+        assert_eq!(project(&[1.0, 0.0], 1.5).unwrap(), vec![1.5, 0.0]);
+    }
+
+    #[test]
+    fn the_distributed_budget_never_exceeds_the_capacity_of_the_positive_weights() {
+        assert_eq!(effective_budget(4.0, &[1.0, 0.0, 0.0]), 2.0);
+        assert_eq!(effective_budget(1.5, &[1.0, 0.0, 0.0]), 1.5);
+        assert_eq!(effective_budget(4.0, &[1.0, 1.0]), 4.0);
+        assert_eq!(effective_budget(4.0, &[0.0, 0.0]), 0.0);
+    }
+
     #[test]
     fn deterministic_rounding_conserves_budgets_across_sparse_pools() {
         for n in 1..64 {
@@ -280,10 +305,19 @@ mod tests {
                 let budget = 2.0 * n as f64 * fraction;
                 let a = project(&values, budget).unwrap();
                 assert_eq!(a, project(&values, budget).unwrap());
+                // The distributed budget is the incoming budget capped at the
+                // capacity of the positive weights.
+                let distributed = effective_budget(budget, &values);
                 assert!(
-                    (a.iter().map(|w| f64::from(*w)).sum::<f64>() - budget).abs()
-                        <= 1e-6 + 1e-6 * budget
+                    (a.iter().map(|w| f64::from(*w)).sum::<f64>() - distributed).abs()
+                        <= 1e-6 + 1e-6 * distributed
                 );
+                // Zero weights are never revived.
+                for (index, weight) in values.iter().enumerate() {
+                    if *weight == 0.0 {
+                        assert_eq!(a[index], 0.0);
+                    }
+                }
             }
         }
     }
