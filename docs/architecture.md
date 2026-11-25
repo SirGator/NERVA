@@ -329,10 +329,15 @@ Das Paarfenster ist stetig: die Maske ist `1` im Inneren des Fensters,
 fällt am Rand quadratisch gegen `0` und ist außerhalb `0`. Die
 Aktualisierung ist dadurch als Funktion der Zeitdifferenz stetig.
 
-Die Ratenkorrektur (experimentell, `configure_pair_rate_correction`) zieht
-den *bedingten* Erwartungswert des zeitlichen Kerns ab: bedingt auf das
-Ereignis „Partner im Fenster gefunden". Die unbedingte Form ließe einen
-positiven Restdrift `A·K·e^{-λW}` stehen und wäre nicht erwartungstreu.
+Die Ratenkorrektur (experimentell, `configure_pair_rate_correction`) zieht den
+Erwartungswert **des Kerns ab, den die Regel anwendet**: der Fenstermaske mal
+dem exponentiellen Timing-Kernel, `M(t)·e^{-t/τ}`. Da die Regel die Korrektur an
+jedem Ereignis abzieht, ist dafür der unbedingte Erwartungswert über das Fenster
+nötig; eine Teilung durch die Partnerwahrscheinlichkeit `1 - e^{-λW}` würde
+überkorrigieren und die Hintergrunddrift in eine künstliche Depression
+verwandeln. Die frühere Korrektur über den bloßen Kernel
+(`e^{-t/τ}`) ließ die Masse des Tapers unberücksichtigt und war damit ebenfalls
+zu groß.
 
 Die Gewichtsänderung landet weich an den Grenzen (`WeightBounds::soft_update`):
 der Schritt wird mit `room·(1-e^{-|δ|/room})` gedämpft, statt hart

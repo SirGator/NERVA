@@ -27,7 +27,7 @@ On 25 November 2026 the local learning rules were changed after the formal
 verification, and the fixture was migrated with a review of the difference:
 
 * the weight step lands softly at the configured bounds instead of being cut off,
-* the rate correction subtracts the conditional expectation of the timing kernel,
+* the rate correction subtracts the expectation of the timing kernel the rule applies,
 * the pair window tapers continuously towards its edge,
 * the homeostasis response is smoothed at the firing-rate target,
 * the competition budget is capped at the capacity of the positive weights.

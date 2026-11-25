@@ -125,6 +125,20 @@ struct RateCorrection {
 }
 
 impl RateCorrection {
+    /// The expected contribution of one event, and with it the correction the
+    /// rule subtracts from every update.
+    ///
+    /// The rule applies the window mask to the exponential timing kernel, so
+    /// the correction has to average **exactly this product** over the window:
+    /// `∫₀^W λ·e^{-λt}·M(t)·e^{-t/τ} dt`. Averaging the bare exponential
+    /// kernel would ignore the mass of the taper and over-correct by it.
+    ///
+    /// The correction is subtracted from *every* event, also from events whose
+    /// nearest partner lies outside the window. The expectation-preserving
+    /// value is therefore the unconditional expectation of the masked kernel,
+    /// not its conditional counterpart: dividing by the partner probability
+    /// `1 - e^{-λW}` would leave a surplus of `A·K·(1-P)/P` and turn the
+    /// removed background into an artificial depression.
     fn expectation(
         &self,
         trace: Option<&DecayingTrace>,
@@ -144,22 +158,67 @@ impl RateCorrection {
             decay_value(trace.value(), elapsed, self.tau_us)
         };
 
-        // Integrate the product of the exponential timing kernel and the
-        // nearest-event age density of an independent Poisson process.
+        // The rate of the local Poisson process, in events per microsecond.
         let rate = f64::from(count) / f64::from(self.tau_us);
-        let q = rate + 1.0 / f64::from(fast_tau_us);
-        // Unconditional expectation of the kernel over the window.
-        let unconditional = (rate / q) * -(-q * window_us as f64).exp_m1();
-        // A pair exists only when the nearest partner falls into the window.
-        // The correction therefore uses the conditional expectation; the
-        // unconditional one leaves a positive drift of `A * K * e^{-rate * W}`.
-        let partner_probability = -(-rate * window_us as f64).exp_m1();
-        if partner_probability > f64::EPSILON {
-            (unconditional / partner_probability).min(1.0) as f32
-        } else {
-            unconditional as f32
-        }
+        // The expectation of the kernel the rule applies.
+        masked_kernel_expectation(rate, f64::from(fast_tau_us), window_us).clamp(0.0, 1.0) as f32
     }
+}
+
+/// The continuous window mask of the pair window.
+///
+/// One in the interior of the window, falling quadratically to zero over the
+/// last [`WINDOW_TAPER_FRACTION`] of the window and zero beyond its edge.
+///
+/// This is the single definition of the mask: [`PairStdp::window_mask`] is its
+/// `f32` view at an exact integer age, and the correction of the expected
+/// update integrates it over the window.
+fn window_mask_real(window_us: u64, elapsed_us: f64) -> f64 {
+    let window = window_us as f64;
+    if window <= 0.0 || elapsed_us >= window {
+        return 0.0;
+    }
+    let taper = window * WINDOW_TAPER_FRACTION as f64;
+    if elapsed_us <= window - taper {
+        return 1.0;
+    }
+    // The taper reaches one at its start and zero at the window edge, so the
+    // mask stays continuous across both boundaries.
+    let remaining = (window - elapsed_us) / taper;
+    remaining * remaining
+}
+
+/// The mass of the tapered window edge: `∫₀¹ e^{-a·u}·(1-u)² du`.
+///
+/// The closed form `(a² - 2a + 2 - 2·e^{-a})/a³` cancels its leading digits
+/// for small `a`; the Taylor series `1/3 - a/12 + a²/60 - …` is used there.
+fn taper_mass(a: f64) -> f64 {
+    if a >= 0.5 {
+        return (a * a - 2.0 * a + 2.0 - 2.0 * (-a).exp()) / (a * a * a);
+    }
+    let a2 = a * a;
+    1.0 / 3.0 - a / 12.0 + a2 / 60.0 - a2 * a / 360.0 + a2 * a2 / 2520.0 - a2 * a2 * a / 20160.0
+        + a2 * a2 * a2 / 181440.0
+        - a2 * a2 * a2 * a / 1814400.0
+}
+
+/// The expectation of the kernel the rule applies, over the pair window.
+///
+/// `∫₀^W λ·e^{-λt}·M(t)·e^{-t/τ} dt` with the window mask `M`.
+///
+/// The mask is one on the interior of the window and falls quadratically over
+/// the last sixteenth, so the integral splits into an analytic interior and
+/// an analytic taper.
+fn masked_kernel_expectation(rate: f64, tau_us: f64, window_us: u64) -> f64 {
+    let window = window_us as f64;
+    let taper = window * WINDOW_TAPER_FRACTION as f64;
+    let interior_us = window - taper;
+    let q = rate + 1.0 / tau_us;
+    // The interior carries the whole kernel: `∫₀^{W-ε} λ·e^{-q·t} dt`.
+    let interior = (rate / q) * -(-q * interior_us).exp_m1();
+    // The taper carries the kernel weighted with the falling mask.
+    let edge = rate * taper * (-q * interior_us).exp() * taper_mass(q * taper);
+    interior + edge
 }
 
 impl PairStdp {
@@ -383,22 +442,19 @@ impl PairStdp {
     /// longer jumps to a finite value while a pair just outside gives zero.
     /// The mask never exceeds one, so the update is never stronger than with
     /// the former hard window.
+    ///
+    /// The mask itself is defined by [`window_mask_real`]; the rate correction
+    /// integrates the same mask over the window.
     fn window_mask(&self, elapsed_us: u64) -> f32 {
-        if self.stdp_window_us == 0 || elapsed_us >= self.stdp_window_us {
-            return 0.0;
-        }
-        let window = self.stdp_window_us as f32;
-        let elapsed = elapsed_us as f32;
-        let taper = window * WINDOW_TAPER_FRACTION;
-        if elapsed <= window - taper {
-            return 1.0;
-        }
-        // The taper reaches one at its start and zero at the window edge, so
-        // the mask stays continuous across both boundaries.
-        let remaining = (window - elapsed) / taper;
-        remaining * remaining
+        window_mask_real(self.stdp_window_us, elapsed_us as f64) as f32
     }
 
+    /// The update of one pair opportunity.
+    ///
+    /// Without a rate correction the update is the masked kernel alone. With
+    /// a rate correction the expected contribution of the event is subtracted,
+    /// also when the nearest partner lies outside the window: that is what
+    /// removes the background of independent firing.
     fn pair_delta(
         &self,
         elapsed_us: Option<u64>,
@@ -724,18 +780,27 @@ mod tests {
         }
     }
 
-    /// The rate correction as the rule computes it: the conditional expectation
-    /// of the kernel over the pair window.
+    /// The rate correction as an independent reference: the expectation of the
+    /// masked kernel over the pair window, computed by numerical quadrature.
+    ///
+    /// The rule computes the same quantity in closed form, so the tests
+    /// compare two independent evaluations of one integral.
     fn corrected_mean(rate: f32, tau_us: f32, window_us: f32) -> f32 {
         let rate = f64::from(rate);
-        let q = rate + 1.0 / f64::from(tau_us);
-        let unconditional = (rate / q) * (1.0 - (-q * f64::from(window_us)).exp());
-        let partner_probability = 1.0 - (-rate * f64::from(window_us)).exp();
-        if partner_probability > f64::EPSILON {
-            (unconditional / partner_probability).min(1.0) as f32
-        } else {
-            unconditional as f32
+        let tau = f64::from(tau_us);
+        let window = f64::from(window_us);
+        let steps = 100_000;
+        let step = window / steps as f64;
+        let mut total = 0.0;
+        for index in 0..steps {
+            let age = (index as f64 + 0.5) * step;
+            total += rate
+                * (-rate * age).exp()
+                * (-age / tau).exp()
+                * window_mask_real(window_us as u64, age)
+                * step;
         }
+        total as f32
     }
 
     #[test]
@@ -885,6 +950,51 @@ mod tests {
             pre_history.weight().get(),
             soft_weight(0.5, -0.2 * mean(100.0), 0.2, 0.8),
         );
+    }
+
+    #[test]
+    fn the_rate_correction_integrates_the_masked_kernel_of_the_rule() {
+        // The rule applies `M(t)·e^{-t/τ}` to a pair. The correction has to
+        // average exactly this product; the closed form of the rule and the
+        // numerical quadrature of the same integral must agree.
+        for (rate, tau, window) in [
+            (5.488_116e-4_f32, 200.0_f32, 500u64),
+            (1.0e-3, 20_000.0, 100_000),
+            (1.0e-5, 20_000.0, 100_000),
+            (1.0e-2, 1_000.0, 10_000),
+        ] {
+            let closed = masked_kernel_expectation(f64::from(rate), f64::from(tau), window);
+            let reference = f64::from(corrected_mean(rate, tau, window as f32));
+            assert!(
+                (closed - reference).abs() <= 1e-6 * (1.0 + closed.abs()),
+                "{closed} != {reference}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_real_window_mask_mirrors_the_mask_the_rule_applies() {
+        let rule = PairStdp::new(&config());
+        let window = rule.stdp_window_us;
+        for elapsed in [0, 1, 100, 468, 469, 470, 480, 495, 499, 500, 501] {
+            let real = window_mask_real(window, elapsed as f64);
+            let applied = f64::from(rule.window_mask(elapsed));
+            assert!((real - applied).abs() <= 1e-6, "{real} != {applied}");
+        }
+    }
+
+    #[test]
+    fn the_conditional_expectation_would_over_correct_the_background() {
+        // The rule charges the correction on every event, also on events whose
+        // nearest partner lies outside the window. The former conditional
+        // expectation therefore over-corrects and leaves a surplus depression.
+        let rate = 5.488_116e-4_f64;
+        let tau = 200.0_f64;
+        let window = 500u64;
+        let masked = masked_kernel_expectation(rate, tau, window);
+        let partner_probability = -(-rate * window as f64).exp_m1();
+        assert!(masked / partner_probability > masked);
+        assert!(masked < 1.0);
     }
 
     #[test]
