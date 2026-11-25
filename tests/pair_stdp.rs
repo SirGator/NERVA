@@ -132,6 +132,24 @@ fn run_pair(
     }
 }
 
+/// The weight after a learning step, as the soft landing realises it.
+fn soft_weight(weight: f32, delta: f32, min: f32, max: f32) -> f32 {
+    let room = if delta >= 0.0 {
+        max - weight
+    } else {
+        weight - min
+    };
+    if room <= 0.0 {
+        return if delta >= 0.0 { max } else { min };
+    }
+    let step = room * -(-(delta.abs() / room)).exp_m1();
+    if delta >= 0.0 {
+        weight + step
+    } else {
+        weight - step
+    }
+}
+
 fn assert_close(actual: f32, expected: f32) {
     assert!(
         (actual - expected).abs() <= 1.0e-6,
@@ -145,8 +163,18 @@ fn runtime_pair_order_selects_potentiation_or_depression() {
     let causal = run_pair(config, 0.5, PairOrder::Causal, false);
     let anti_causal = run_pair(config, 0.5, PairOrder::AntiCausal, false);
 
-    let expected_ltp = 0.5 + config.a_plus * (-(10.0_f32) / config.tau_plus_us).exp();
-    let expected_ltd = 0.5 - config.a_minus * (-(20.0_f32) / config.tau_minus_us).exp();
+    let expected_ltp = soft_weight(
+        0.5,
+        config.a_plus * (-(10.0_f32) / config.tau_plus_us).exp(),
+        config.min_weight,
+        config.max_weight,
+    );
+    let expected_ltd = soft_weight(
+        0.5,
+        -config.a_minus * (-(20.0_f32) / config.tau_minus_us).exp(),
+        config.min_weight,
+        config.max_weight,
+    );
     assert_close(causal.weight.get(), expected_ltp);
     assert_close(anti_causal.weight.get(), expected_ltd);
     assert!(causal.weight.get() > 0.5);

@@ -193,7 +193,21 @@ fn cpu_compute_preserves_the_original_runtime_state_and_observations() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert_eq!(actual, include_str!("fixtures/cpu_reference.txt"));
+            // The fixture is a frozen oracle. A migration is only allowed with
+            // an explicit review of the difference; setting the environment
+            // variable writes the current state and is meant for that review.
+            if std::env::var_os("NERVA_UPDATE_REFERENCE").is_some() {
+                std::fs::write(
+                    concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/tests/fixtures/cpu_reference.txt"
+                    ),
+                    &actual,
+                )
+                .expect("reference fixture is writable");
+            } else {
+                assert_eq!(actual, include_str!("fixtures/cpu_reference.txt"));
+            }
         }
     }
 }

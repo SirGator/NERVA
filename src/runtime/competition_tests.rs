@@ -103,8 +103,13 @@ fn simultaneous_hooks_normalize_once_before_emission_and_preserve_queued_amplitu
     );
     match records.last().unwrap() {
         CompetitionEvent::Normalized { before, .. } => {
-            assert!((before[0] - 1.1).abs() < 1e-6);
-            assert!((before[1] - 0.7).abs() < 1e-6);
+            // The potentiation hook ran before the normalization. Its step is
+            // damped softly at the bound, so the weight rose but stayed below
+            // the unconstrained value.
+            assert!(before[0] > initial[0]);
+            assert!(before[0] < 1.1);
+            assert!(before[1] > initial[1]);
+            assert!(before[1] < 0.7);
         }
         _ => panic!("normalization did not follow both hooks"),
     }

@@ -993,6 +993,7 @@ fn maintenance_uses_neuron_local_input_and_activity_after_same_time_spike() {
         max_intrinsic_current: 2.0,
         min_structural_drive: 0.0,
         max_structural_drive: 2.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(one_neuron_network(), NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1036,6 +1037,7 @@ fn local_homeostasis_clock_maintains_a_silent_neuron_without_global_tick() {
         max_intrinsic_current: 10.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(one_neuron_network(), NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1144,6 +1146,7 @@ fn enabling_homeostasis_starts_and_disabling_stops_local_clocks() {
         max_intrinsic_current: 10.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(one_neuron_network(), NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1177,6 +1180,7 @@ fn reenabled_homeostasis_does_not_integrate_the_disabled_interval() {
         max_intrinsic_current: 10.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(one_neuron_network(), NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1228,6 +1232,7 @@ fn many_neuron_clocks_have_deterministic_spread_without_a_global_phase() {
         max_intrinsic_current: 10.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let simulation = simulation(network, NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1284,6 +1289,7 @@ fn multi_minute_local_homeostasis_stays_bounded_across_input_regimes() {
         max_intrinsic_current: 1_000.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(network, NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1345,6 +1351,7 @@ fn sustained_input_raises_current_then_autonomous_spikes_apply_negative_feedback
         max_intrinsic_current: 2_000.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(one_neuron_network(), NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1410,6 +1417,7 @@ fn isolated_cell_accumulates_structural_drive_without_artificial_spikes_over_tim
         max_intrinsic_current: 2_000.0,
         min_structural_drive: 0.0,
         max_structural_drive: 10.0,
+        transition_width: 1.0,
     });
     let mut simulation = simulation(one_neuron_network(), NoPlasticity)
         .with_homeostasis(homeostasis)
@@ -1433,6 +1441,7 @@ fn homeostasis_population_excludes_clocks_and_one_shot_maintenance() {
             target_input_rate: 50.0,
             structural_adjustment_rate: 1.0,
             max_structural_drive: 100.0,
+            transition_width: 1.0,
             ..HomeostasisConfig::default()
         }))
         .unwrap();

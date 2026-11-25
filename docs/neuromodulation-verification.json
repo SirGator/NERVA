@@ -41,7 +41,7 @@
   "historical_fixture": {
     "original_sha256": "343db99261e5d6df63acfc601f38148356f366ab908904799043bb3d831b3f68",
     "extended_sha256": "8195ee416e8a9ee5a912172f293e088f8b299f3ab9c84a6a8d9de0d695dbb7d7",
-    "only_neutral_new_fields_added": true
+    "only_neutral_new_fields_added": false
   },
   "source_sha256": {
     "Cargo.lock": "b8e188618273a9e73d4e05c66f9f18d4d7254534b6f89612f9489691549b3dd9",
@@ -182,5 +182,24 @@
     "tests/runtime_profile.rs": "67e7c85673171fe3af67083a9c5482ec4aa2ffd7da9ef43b62a0c709cf576e4b",
     "tests/transduction_time.rs": "9677d0a285b71223e2c47eec670489e99bbd3de0b7fb1e4c3bf06f44f5ed035e"
   },
-  "model_changes_applied_at_library_completion": false
+  "model_changes_applied_at_library_completion": false,
+  "rule_change_migration": {
+    "date": "2026-11-25",
+    "reason": "Die lokalen Lernregeln wurden nach der formalen Pruefung geaendert: weiche Landung der Gewichtsaenderung, bedingte Ratenkorrektur, stetiges Paarfenster, geglaettetes Homostase-Gate und wirksames Wettbewerbsbudget.",
+    "fixture_previous_sha256": "8195ee416e8a9ee5a912172f293e088f8b299f3ab9c84a6a8d9de0d695dbb7d7",
+    "fixture_new_sha256": "99a07d44541005dca108f58ed99f0242c4ea1f5ef7a3672ba5aa4f7cb5131cc3",
+    "fixture_review": "Nur Werte, die von den geaenderten Regeln abhaengen, weichen ab: Gewichte, uebertragene Amplituden, Eingangsspuren, Membranpotentiale und das neue Homostase-Feld.",
+    "changed_files_sha256": {
+      "src/config/learning.rs": "8761f1686ee4ebfbfa40c7d11d2cc4edcb6dddf680b5b2bb5292d27041320034",
+      "src/learning/bounds.rs": "ae8db90960532606bd8e0ea3ec63af601ccf0cb08602a09de1f193b37203c10a",
+      "src/learning/competition.rs": "338e75b4e9ec7f8c3c0ce537edb219990d9eefa47cbc26e66927eade045cc111",
+      "src/learning/homeostasis.rs": "5b28371c0f5809ebcd2d8ea95cb3ac0a7fa391214fff52adc055ef3358c5ad69",
+      "src/learning/pair_stdp.rs": "c02e4e6b2c9536163aec92eed716b31141ebd50009ca93fb641b919bd2e9c0c0",
+      "src/learning/weight_update.rs": "924ad1e12ee99b83d46b1ab9c269e37a93266446182770bb73144a0e75d42d62",
+      "src/runtime/competition_tests.rs": "254e5da88a439220691b0ef2b08e21defeeb30e58717d3d0a1c7a6301b4b2693",
+      "src/runtime/simulation/tests.rs": "bb13ea8c9a621634587ba6b2d2bec2652942c71278aebfda1e15360c1a47271e",
+      "tests/compute_regression.rs": "e7a183354d499a9d70dd82703549aaa179ec664b9fbacedbcafb45cabdcb810b",
+      "tests/fixtures/cpu_reference.txt": "99a07d44541005dca108f58ed99f0242c4ea1f5ef7a3672ba5aa4f7cb5131cc3"
+    }
+  }
 }
