@@ -5,6 +5,18 @@ use crate::{
     core::{Neuron, NeuronError, NeuronId, SimTime},
 };
 
+/// Ramps a local error continuously from zero to one over a band of `width`.
+///
+/// The gate is `0` for a non-positive error, `1` for an error of at least
+/// `width`, and linear in between. A width of zero restores the former hard
+/// switch, where any positive error counts fully.
+fn smooth_gate(error: f32, width: f32) -> f32 {
+    if width <= 0.0 {
+        return if error > 0.0 { 1.0 } else { 0.0 };
+    }
+    (error / width).clamp(0.0, 1.0)
+}
+
 /// Why a local maintenance update could not be applied.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HomeostasisError {
@@ -56,6 +68,7 @@ pub struct LocalHomeostasis {
     max_intrinsic_current: f32,
     min_structural_drive: f32,
     max_structural_drive: f32,
+    transition_width: f32,
 }
 
 impl LocalHomeostasis {
@@ -73,6 +86,7 @@ impl LocalHomeostasis {
             max_intrinsic_current: config.max_intrinsic_current,
             min_structural_drive: config.min_structural_drive,
             max_structural_drive: config.max_structural_drive,
+            transition_width: config.transition_width,
         }
     }
 
@@ -128,32 +142,44 @@ impl LocalHomeostasis {
 
         let mut requested_intrinsic_current = state.intrinsic_current;
         let mut requested_structural_drive = state.structural_drive;
+
+        // The switch on the firing-rate target is smoothed: the penalty for
+        // firing above the target is ramped over a band of `transition_width`
+        // instead of switching on abruptly. The maintenance rate is therefore
+        // continuous in the local firing estimate, and a cell whose estimate
+        // sits exactly on its target no longer receives an abrupt penalty.
+        //
+        // The switch on the input target stays a hard decision: adequate input
+        // and missing input are two different diagnoses (excitability against
+        // connectivity), and the documented behaviour distinguishes them.
+        let firing_error = state.firing_avg - self.target_rate_hz;
+        let missing_input = self.target_input_rate - state.input_avg;
+        let firing_gate = smooth_gate(firing_error, self.transition_width);
+
         if state.input_avg >= self.target_input_rate {
             // Input is available, so a firing-rate deficit diagnoses local
             // excitability rather than missing connectivity.
-            let firing_error = state.firing_avg - self.target_rate_hz;
             requested_intrinsic_current -=
                 self.intrinsic_adjustment_rate * firing_error * elapsed_seconds;
 
             // Sufficient input makes an outstanding local search request less
             // urgent. This is not topology mutation; it only relaxes the cue.
-            requested_structural_drive -= self.structural_adjustment_rate
-                * (state.input_avg - self.target_input_rate)
-                * elapsed_seconds;
+            // Both branches share this linear response, so the structural drive
+            // stays continuous across the input target.
+            requested_structural_drive +=
+                self.structural_adjustment_rate * missing_input * elapsed_seconds;
         } else {
-            let missing_input = self.target_input_rate - state.input_avg;
             requested_structural_drive +=
                 self.structural_adjustment_rate * missing_input * elapsed_seconds;
 
             // A neuron firing despite missing input is overexcitable. Reduce
             // its intrinsic current more strongly than for an ordinary
-            // high-firing, adequately driven cell.
-            if state.firing_avg > self.target_rate_hz {
-                let excess_firing = state.firing_avg - self.target_rate_hz;
-                requested_intrinsic_current -= self.intrinsic_adjustment_rate
-                    * (excess_firing + missing_input)
-                    * elapsed_seconds;
-            }
+            // high-firing, adequately driven cell. The strength of the
+            // reduction grows continuously with the firing excess.
+            let excess_firing = firing_error.max(0.0);
+            requested_intrinsic_current -= self.intrinsic_adjustment_rate
+                * (excess_firing + missing_input * firing_gate)
+                * elapsed_seconds;
         }
 
         let new_intrinsic_current = neuron.set_intrinsic_current_clamped(
@@ -231,6 +257,7 @@ mod tests {
             max_intrinsic_current: 10.0,
             min_structural_drive: 0.0,
             max_structural_drive: 10.0,
+            transition_width: 1.0,
         }
     }
 

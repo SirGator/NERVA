@@ -37,6 +37,12 @@ pub struct HomeostasisConfig {
     pub min_structural_drive: f32,
     /// Inclusive upper structural-drive bound.
     pub max_structural_drive: f32,
+    /// Half-width of the smoothing band around the local targets, in rate units.
+    ///
+    /// The maintenance response is continuous: instead of switching abruptly
+    /// when a local estimate crosses its target, the response is ramped over a
+    /// band of this width. A width of zero restores the former hard switch.
+    pub transition_width: f32,
 }
 
 impl HomeostasisConfig {
@@ -69,6 +75,7 @@ impl HomeostasisConfig {
             self.max_structural_drive,
             "homeostasis.max_structural_drive",
         )?;
+        non_negative(self.transition_width, "homeostasis.transition_width")?;
 
         Ok(())
     }
@@ -87,6 +94,7 @@ impl Default for HomeostasisConfig {
             max_intrinsic_current: 1_000.0,
             min_structural_drive: 0.0,
             max_structural_drive: 1_000.0,
+            transition_width: 1.0,
         }
     }
 }
